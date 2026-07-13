@@ -1,0 +1,40 @@
+{
+  "groups": [
+    {
+      "name": "app.counseling",
+      "type": "com.unza.clinic.config.CounselingProperties",
+      "sourceType": "com.unza.clinic.config.CounselingProperties"
+    }
+  ],
+  "properties": [
+    {
+      "name": "app.counseling.base-url",
+      "type": "java.lang.String",
+      "description": "Base URL of the counseling system, e.g. https:\/\/counselling.unza.ac.zm",
+      "sourceType": "com.unza.clinic.config.CounselingProperties",
+      "defaultValue": ""
+    },
+    {
+      "name": "app.counseling.service-password",
+      "type": "java.lang.String",
+      "description": "Password for the service account.",
+      "sourceType": "com.unza.clinic.config.CounselingProperties",
+      "defaultValue": ""
+    },
+    {
+      "name": "app.counseling.service-token",
+      "type": "java.lang.String",
+      "description": "Optional static token override. When non-blank this is used directly instead of auto-login. Useful for testing; not recommended in production (tokens expire after 1 h).",
+      "sourceType": "com.unza.clinic.config.CounselingProperties",
+      "defaultValue": ""
+    },
+    {
+      "name": "app.counseling.service-username",
+      "type": "java.lang.String",
+      "description": "Username of the service account in the counseling system (ROLE_COUNSELOR).",
+      "sourceType": "com.unza.clinic.config.CounselingProperties",
+      "defaultValue": ""
+    }
+  ],
+  "hints": []
+}
