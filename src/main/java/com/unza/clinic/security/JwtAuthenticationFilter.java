@@ -47,18 +47,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String authHeader = request.getHeader(HttpHeaders.AUTHORIZATION);
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            // Check for legacy headers for backward compatibility (optional)
-            String legacyUserId = request.getHeader("X-Clinic-User-Id");
-            String legacyRole = request.getHeader("X-Clinic-User-Role");
-            if (legacyUserId != null && legacyRole != null) {
-                // Create a simplified authentication for backward compatibility
-                chain.doFilter(request, response);
-                return;
-            } else {
-                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
-                response.getWriter().write("{\"error\":\"Authorization header missing or invalid\"}");
-                return;
-            }
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.getWriter().write("{\"error\":\"Authorization header missing or invalid\"}");
+            return;
         }
 
         String token = authHeader.substring(7);
@@ -83,12 +74,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     }
                 } else {
                     permissions = new ArrayList<>(getDefaultPermissionsForRole(role));
-                }
-                // Merge with role defaults so new default permissions apply to existing users
-                for (String def : getDefaultPermissionsForRole(role)) {
-                    if (!permissions.contains(def)) {
-                        permissions.add(def);
-                    }
                 }
 
                 List<SimpleGrantedAuthority> authorities = new ArrayList<>();
@@ -147,7 +132,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String path = request.getRequestURI();
 
         if (path.startsWith("/api/patients")) {
-            if ("POST".equals(method)) return new String[] { "walkin.view", "patients.view" };
+            if ("POST".equals(method)) return new String[] { "walkin.view" };
             if ("PUT".equals(method)) return new String[] { "walkin.view", "patients.manage" };
             return new String[] { "patients.view" };
         }
@@ -244,45 +229,6 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     }
 
     private List<String> getDefaultPermissionsForRole(String role) {
-        return switch (role != null ? role.toLowerCase() : "") {
-            case "admin" -> java.util.List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "walkin.view", "triage.view", "emergency.view", "staff.view", "schedules.view",
-                    "records.view", "forms.view", "prescriptions.view", "referrals.view",
-                    "counseling.view", "laboratory.view", "radiology.view", "bloodbank.view", "pharmacy.view",
-                    "suppliers.view", "inventory.view", "wards.view", "admissions.view",
-                    "billing.view", "billing.create", "billing.payments", "insurance.view",
-                    "departments.manage", "attendance.view", "users.manage", "users.reset_password",
-                    "patients.manage", "staff.manage", "audit.view", "audit.export",
-                    "reports.view", "settings.view", "settings.manage", "backup.export", "tariffs.manage"
-            );
-            case "doctor" -> java.util.List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "walkin.view", "triage.view", "emergency.view", "staff.view", "schedules.view",
-                    "records.view", "forms.view", "prescriptions.view", "referrals.view", "counseling.view",
-                    "laboratory.view", "radiology.view", "bloodbank.view", "pharmacy.view", "wards.view",
-                    "admissions.view", "reports.view"
-            );
-            case "nurse" -> java.util.List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "walkin.view", "triage.view", "emergency.view", "staff.view",
-                    "records.view", "forms.view", "counseling.view", "pharmacy.view", "wards.view", "admissions.view"
-            );
-            case "receptionist" -> java.util.List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "walkin.view", "schedules.view", "forms.view", "billing.view",
-                    "billing.create", "billing.payments", "insurance.view"
-            );
-            case "pharmacist" -> java.util.List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "forms.view", "pharmacy.view", "suppliers.view", "inventory.view",
-                    "billing.view", "billing.create", "billing.payments"
-            );
-            case "lab technician" -> java.util.List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "forms.view", "laboratory.view", "radiology.view", "bloodbank.view", "reports.view"
-            );
-            default -> java.util.List.of("dashboard.view");
-        };
+        return RolePermissions.forRole(role);
     }
 }

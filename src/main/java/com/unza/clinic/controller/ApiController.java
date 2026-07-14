@@ -852,15 +852,23 @@ public class ApiController {
     }
 
     @PutMapping("/admissions/{id}/discharge")
-    public Map<String, Object> dischargeAdmission(HttpServletRequest httpRequest, @PathVariable Long id) {
-        requirePermission(httpRequest, "admissions.view");
+    public Map<String, Object> dischargeAdmission(HttpServletRequest httpRequest, @PathVariable Long id, @Valid @RequestBody AdmissionDischargeRequest request) {
+        AppUser actor = requirePermission(httpRequest, "admissions.view");
         Admission admission = dataStore.getAdmission(id);
         if (admission == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Admission not found");
         }
+        if (isEqualIgnoreCase(admission.getStatus(), "discharged")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Admission is already discharged");
+        }
         admission.setStatus("discharged");
+        admission.setDischargeType(request.dischargeType());
+        admission.setDischargeSummary(request.dischargeSummary());
+        admission.setDischargedOn(hasText(request.dischargedOn()) ? request.dischargedOn() : LocalDate.now().toString());
+        admission.setDischargedBy(request.dischargedBy());
         admission = dataStore.updateAdmission(admission);
         wsService.broadcastWardStatus(buildWardSummary());
+        writeAuditLog(actor.getName(), "discharge", "Discharged admission " + admission.getAdmissionId() + " for " + admission.getPatientName(), "127.0.0.1");
         return Map.of("success", true, "entry", toAdmissionResponse(admission));
     }
 
@@ -1178,7 +1186,18 @@ public class ApiController {
 
     @PostMapping("/users")
     public Map<String, Object> createUsers(HttpServletRequest httpRequest, @Valid @RequestBody UserCreateRequest request) {
-        requirePermission(httpRequest, "users.manage");
+        AppUser actor = requirePermission(httpRequest, "users.manage");
+        boolean actorIsAdmin = isEqualIgnoreCase(actor.getRole(), "Admin");
+        if (!actorIsAdmin && hasText(request.role()) && isEqualIgnoreCase(request.role(), "Admin")) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only an Admin can assign the Admin role");
+        }
+        if (!actorIsAdmin && request.permissions() != null) {
+            List<String> actorPermissions = parseUserPermissions(actor);
+            List<String> requestedPermissions = request.permissions().stream().filter(this::hasText).map(String::trim).toList();
+            if (!actorPermissions.containsAll(requestedPermissions)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You cannot grant permissions you do not hold yourself");
+            }
+        }
         StaffMember linkedStaff = null;
         if (hasText(request.staffId())) {
             linkedStaff = dataStore.getStaffMemberByStaffId(request.staffId().trim());
@@ -1219,6 +1238,17 @@ public class ApiController {
         }
         if (!managingUsers && request.forcePasswordChange() != null && Boolean.TRUE.equals(request.forcePasswordChange())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You do not have permission to trigger a forced password reset");
+        }
+        boolean actorIsAdmin = isEqualIgnoreCase(currentUser.getRole(), "Admin");
+        if (!actorIsAdmin && hasText(request.role()) && isEqualIgnoreCase(request.role(), "Admin")) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only an Admin can assign the Admin role");
+        }
+        if (!actorIsAdmin && request.permissions() != null) {
+            List<String> actorPermissions = parseUserPermissions(currentUser);
+            List<String> requestedPermissions = request.permissions().stream().filter(this::hasText).map(String::trim).toList();
+            if (!actorPermissions.containsAll(requestedPermissions)) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You cannot grant permissions you do not hold yourself");
+            }
         }
         AppUser user = dataStore.getUser(id);
         if (user == null) {
@@ -2381,59 +2411,6 @@ public class ApiController {
         ));
     }
 
-    @PostMapping("/seed-users")
-    public Map<String, Object> seedUsers() {
-        if (dataStore.getUsers().isEmpty()) {
-            AppUser u1 = new AppUser();
-            u1.setUserId("USR-001");
-            u1.setName("Admin User");
-            u1.setEmail("admin@unza.zm");
-            u1.setRole("Admin");
-            u1.setDepartment("IT");
-            u1.setStaffId("");
-            u1.setManNumber("");
-            u1.setPassword("admin123");
-            u1.setStatus("active");
-            u1.setLastLogin("");
-            u1.setPasswordChangedAt(LocalDateTime.now().toString());
-            u1.setPasswordVersion(1);
-            dataStore.addUser(u1);
-
-            AppUser u2 = new AppUser();
-            u2.setUserId("USR-002");
-            u2.setName("Dr. Joseph Tembo");
-            u2.setEmail("j.tembo@unza.zm");
-            u2.setRole("Doctor");
-            u2.setDepartment("General Medicine");
-            u2.setStaffId("STF-001");
-            u2.setManNumber("MAN-001");
-            u2.setPassword("doctor123");
-            u2.setStatus("active");
-            u2.setLastLogin("");
-            u2.setPasswordChangedAt(LocalDateTime.now().toString());
-            u2.setPasswordVersion(1);
-            dataStore.addUser(u2);
-
-            AppUser u3 = new AppUser();
-            u3.setUserId("USR-003");
-            u3.setName("Nurse Agnes Zulu");
-            u3.setEmail("a.zulu@unza.zm");
-            u3.setRole("Nurse");
-            u3.setDepartment("Emergency");
-            u3.setStaffId("STF-003");
-            u3.setManNumber("MAN-003");
-            u3.setPassword("nurse123");
-            u3.setStatus("active");
-            u3.setLastLogin("");
-            u3.setPasswordChangedAt(LocalDateTime.now().toString());
-            u3.setPasswordVersion(1);
-            dataStore.addUser(u3);
-
-            return Map.of("success", true, "message", "Users seeded successfully");
-        }
-        return Map.of("success", false, "message", "Users already exist");
-    }
-
     private Map<String, Object> toPatientResponse(Patient patient) {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("id", patient.getId());
@@ -2545,7 +2522,22 @@ public class ApiController {
     }
 
     private Map<String, Object> toAdmissionResponse(Admission admission) {
-        return Map.of("id", admission.getId(), "admission_id", admission.getAdmissionId(), "patient_id", admission.getPatientId(), "patient_name", admission.getPatientName(), "ward", admission.getWard(), "bed", admission.getBed(), "doctor", admission.getDoctor(), "admitted_on", admission.getAdmittedOn(), "diagnosis", admission.getDiagnosis(), "status", admission.getStatus());
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("id", admission.getId());
+        response.put("admission_id", admission.getAdmissionId());
+        response.put("patient_id", admission.getPatientId());
+        response.put("patient_name", admission.getPatientName());
+        response.put("ward", admission.getWard());
+        response.put("bed", admission.getBed());
+        response.put("doctor", admission.getDoctor());
+        response.put("admitted_on", admission.getAdmittedOn());
+        response.put("diagnosis", admission.getDiagnosis());
+        response.put("status", admission.getStatus());
+        response.put("discharge_type", stringValue(admission.getDischargeType()));
+        response.put("discharge_summary", stringValue(admission.getDischargeSummary()));
+        response.put("discharged_on", stringValue(admission.getDischargedOn()));
+        response.put("discharged_by", stringValue(admission.getDischargedBy()));
+        return response;
     }
 
     private Map<String, Object> toLabTestResponse(LabTest test) {
@@ -3952,38 +3944,19 @@ public class ApiController {
     }
 
     private AppUser requireAuthenticatedUser(HttpServletRequest request) {
-        // First try to get user from Spring Security context (JWT)
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth != null && auth.isAuthenticated() && auth.getPrincipal() instanceof AuthUserDetails) {
-            AuthUserDetails userDetails = (AuthUserDetails) auth.getPrincipal();
-            AppUser user = dataStore.getUser(userDetails.getId());
-            if (user == null) {
-                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found");
-            }
-            if (!isEqualIgnoreCase(user.getStatus(), "active")) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Account is inactive");
-            }
-            return user;
-        }
-
-        // Fallback to legacy headers for backward compatibility (transient phase)
-        String rawUserId = request.getHeader("X-Clinic-User-Id");
-        if (!hasText(rawUserId)) {
+        if (auth == null || !auth.isAuthenticated() || !(auth.getPrincipal() instanceof AuthUserDetails)) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing signed-in user context");
         }
-        try {
-            Long userId = Long.parseLong(rawUserId.trim());
-            AppUser user = dataStore.getUser(userId);
-            if (user == null) {
-                throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Signed-in user was not found");
-            }
-            if (!isEqualIgnoreCase(user.getStatus(), "active")) {
-                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Signed-in user is inactive");
-            }
-            return user;
-        } catch (NumberFormatException ex) {
-            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Invalid signed-in user context");
+        AuthUserDetails userDetails = (AuthUserDetails) auth.getPrincipal();
+        AppUser user = dataStore.getUser(userDetails.getId());
+        if (user == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found");
         }
+        if (!isEqualIgnoreCase(user.getStatus(), "active")) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Account is inactive");
+        }
+        return user;
     }
 
     private AppUser requirePermission(HttpServletRequest request, String permission) {
@@ -4030,102 +4003,7 @@ public class ApiController {
     }
 
     private List<String> defaultPermissionsForRole(String role) {
-        if (isEqualIgnoreCase(role, "Admin")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view", "walkin.view",
-                    "triage.view", "emergency.view", "staff.view", "schedules.view", "records.view",
-                    "forms.view", "prescriptions.view", "referrals.view", "laboratory.view", "radiology.view",
-                    "counseling.view", "bloodbank.view", "pharmacy.view", "suppliers.view", "inventory.view", "wards.view",
-                    "admissions.view", "billing.view", "billing.create", "billing.payments", "insurance.view",
-                    "departments.manage", "attendance.view", "users.manage", "users.reset_password",
-                    "patients.manage", "staff.manage",
-                    "audit.view", "audit.export", "reports.view", "settings.view", "settings.manage",
-                    "backup.export", "tariffs.manage"
-            );
-        }
-        if (isEqualIgnoreCase(role, "Doctor")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view", "walkin.view",
-                    "triage.view", "emergency.view", "staff.view", "schedules.view", "records.view",
-                    "forms.view", "prescriptions.view", "referrals.view", "laboratory.view", "radiology.view",
-                    "counseling.view", "bloodbank.view", "wards.view", "admissions.view", "reports.view"
-            );
-        }
-        if (isEqualIgnoreCase(role, "Nurse")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view", "walkin.view",
-                    "triage.view", "emergency.view", "staff.view", "records.view", "forms.view", "counseling.view",
-                    "wards.view", "admissions.view"
-            );
-        }
-        if (isEqualIgnoreCase(role, "Receptionist")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view", "walkin.view",
-                    "schedules.view", "forms.view", "billing.view", "billing.create", "billing.payments", "insurance.view"
-            );
-        }
-        if (isEqualIgnoreCase(role, "Pharmacist")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view", "forms.view",
-                    "pharmacy.view", "pharmacy.dispense", "suppliers.view", "inventory.view",
-                    "prescriptions.view", "billing.view", "billing.create", "billing.payments"
-            );
-        }
-        if (isEqualIgnoreCase(role, "Lab Technician")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "forms.view", "laboratory.view", "radiology.view", "bloodbank.view", "reports.view"
-            );
-        }
-        if (isEqualIgnoreCase(role, "MCH Nurse")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "walkin.view", "triage.view", "mch.view", "referrals.view", "forms.view"
-            );
-        }
-        if (isEqualIgnoreCase(role, "Dentist")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "dental.view", "prescriptions.view", "referrals.view", "forms.view"
-            );
-        }
-        if (isEqualIgnoreCase(role, "Optometrist")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "eye.view", "prescriptions.view", "referrals.view", "forms.view"
-            );
-        }
-        if (isEqualIgnoreCase(role, "Physiotherapist")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "physio.view", "referrals.view", "forms.view"
-            );
-        }
-        if (isEqualIgnoreCase(role, "Counselor")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "counseling.view", "art.view", "sti.view", "records.view", "forms.view"
-            );
-        }
-        if (isEqualIgnoreCase(role, "Radiographer")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "radiology.view", "forms.view"
-            );
-        }
-        if (isEqualIgnoreCase(role, "Cashier")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "billing.view", "billing.create", "billing.payments", "insurance.view", "tariffs.manage"
-            );
-        }
-        if (isEqualIgnoreCase(role, "Records Clerk")) {
-            return List.of(
-                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
-                    "walkin.view", "records.view", "forms.view", "schedules.view"
-            );
-        }
-        return List.of("dashboard.view", "sections.view");
+        return com.unza.clinic.security.RolePermissions.forRole(role);
     }
 
     private void writeAuditLog(String user, String action, String description, String ipAddress) {
@@ -4220,11 +4098,11 @@ public class ApiController {
         String currentPassword = stringValue(request.get("currentPassword"));
         String newPassword = stringValue(request.get("newPassword"));
         AuthUserDetails currentUser = getCurrentUserDetails();
-        String email = currentUser != null ? currentUser.getEmail() : stringValue(request.get("email"));
-        
-        if (isBlank(email)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email is required");
+        if (currentUser == null) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Missing signed-in user context");
         }
+        String email = currentUser.getEmail();
+
         if (isBlank(currentPassword) || isBlank(newPassword)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Current and new password are required");
         }

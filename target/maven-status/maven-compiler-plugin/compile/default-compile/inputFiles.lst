@@ -13,6 +13,7 @@ F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\controller\EnhancedFeatures
 F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\controller\ExternalCounselingController.java
 F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\dto\AdminDataCleanupRequest.java
 F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\dto\AdmissionCreateRequest.java
+F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\dto\AdmissionDischargeRequest.java
 F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\dto\AdmissionTransferRequest.java
 F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\dto\AppointmentCreateRequest.java
 F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\dto\BillingCreateRequest.java
@@ -131,6 +132,7 @@ F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\repository\UserRepository.j
 F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\repository\VitalAlertRepository.java
 F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\repository\WardStatusRepository.java
 F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\security\JwtAuthenticationFilter.java
+F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\security\RolePermissions.java
 F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\service\AllergySafetyService.java
 F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\service\ClinicDataStore.java
 F:\UNZA CLINIC\backend\src\main\java\com\unza\clinic\service\ClinicTableInitializer.java

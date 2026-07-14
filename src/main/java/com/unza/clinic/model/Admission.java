@@ -21,6 +21,10 @@ public class Admission {
     private String admittedOn;
     private String diagnosis;
     private String status;
+    private String dischargeType;
+    private String dischargeSummary;
+    private String dischargedOn;
+    private String dischargedBy;
 
     public Admission() {}
 
@@ -44,4 +48,12 @@ public class Admission {
     public void setDiagnosis(String diagnosis) { this.diagnosis = diagnosis; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getDischargeType() { return dischargeType; }
+    public void setDischargeType(String dischargeType) { this.dischargeType = dischargeType; }
+    public String getDischargeSummary() { return dischargeSummary; }
+    public void setDischargeSummary(String dischargeSummary) { this.dischargeSummary = dischargeSummary; }
+    public String getDischargedOn() { return dischargedOn; }
+    public void setDischargedOn(String dischargedOn) { this.dischargedOn = dischargedOn; }
+    public String getDischargedBy() { return dischargedBy; }
+    public void setDischargedBy(String dischargedBy) { this.dischargedBy = dischargedBy; }
 }
