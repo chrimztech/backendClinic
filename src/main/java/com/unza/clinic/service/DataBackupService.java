@@ -276,7 +276,7 @@ public class DataBackupService {
         result.put("notifications", restoreList(notificationRepo, (List<Map<String, Object>>) backupData.get("notifications"), NotificationItem.class));
         result.put("attendance", restoreList(attendanceRepo, (List<Map<String, Object>>) backupData.get("attendance_records"), AttendanceRecord.class));
         result.put("staff_schedules", restoreList(staffScheduleRepo, (List<Map<String, Object>>) backupData.get("staff_schedules"), StaffSchedule.class));
-        result.put("wards", restoreList(wardRepo, (List<Map<String, Object>>) backupData.get("ward_statuses"), WardStatus.class));
+        result.put("wards", restoreList(wardRepo, (List<Map<String, Object>>) backupData.get("wards"), WardStatus.class));
         result.put("audit_logs", restoreList(auditLogRepo, (List<Map<String, Object>>) backupData.get("audit_logs"), AuditLogEntry.class));
 
         return result;
