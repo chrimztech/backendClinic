@@ -1239,7 +1239,16 @@ public class ApiController {
         if (!managingUsers && request.forcePasswordChange() != null && Boolean.TRUE.equals(request.forcePasswordChange())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You do not have permission to trigger a forced password reset");
         }
+        AppUser user = dataStore.getUser(id);
+        if (user == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found");
+        }
         boolean actorIsAdmin = isEqualIgnoreCase(currentUser.getRole(), "Admin");
+        boolean targetIsAdmin = isEqualIgnoreCase(user.getRole(), "Admin");
+        if (!actorIsAdmin && targetIsAdmin
+                && (hasText(request.role()) || hasText(request.status()) || request.permissions() != null)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only an Admin can change another Admin's role, status, or permissions");
+        }
         if (!actorIsAdmin && hasText(request.role()) && isEqualIgnoreCase(request.role(), "Admin")) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only an Admin can assign the Admin role");
         }
@@ -1249,10 +1258,6 @@ public class ApiController {
             if (!actorPermissions.containsAll(requestedPermissions)) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You cannot grant permissions you do not hold yourself");
             }
-        }
-        AppUser user = dataStore.getUser(id);
-        if (user == null) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found");
         }
 
         String beforeRole = stringValue(user.getRole());
@@ -1311,6 +1316,9 @@ public class ApiController {
         AppUser user = dataStore.getUser(id);
         if (user == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found");
+        }
+        if (!isEqualIgnoreCase(currentUser.getRole(), "Admin") && isEqualIgnoreCase(user.getRole(), "Admin")) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only an Admin can delete another Admin's account");
         }
         dataStore.deleteUser(user);
         writeAuditLog(currentUser.getName(), currentUser.getRole(), "delete", "Deleted user account for " + user.getName() + ".", "127.0.0.1");
@@ -4161,6 +4169,9 @@ public class ApiController {
         AppUser target = dataStore.getUser(id);
         if (target == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found");
+        }
+        if (!isEqualIgnoreCase(actor.getRole(), "Admin") && isEqualIgnoreCase(target.getRole(), "Admin")) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Only an Admin can reset another Admin's password");
         }
         target.setPassword(newPassword);
         target.setForcePasswordChange(true);
