@@ -1,0 +1,19 @@
+target/
+logs/
+*.log
+
+# Compiled class files
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+
+# Spring Boot
+application-local.yml
+application-dev.yml
+*.env
