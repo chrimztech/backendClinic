@@ -33,6 +33,8 @@ public class Patient {
     private String school;
     private Integer year;
     private String hostel;
+    private String department;
+    private String role;
     @Column(name = "emergency_contact")
     private String emergencyContact;
     @Column(name = "emergency_phone")
@@ -82,6 +84,10 @@ public class Patient {
     public void setYear(Integer year) { this.year = year; }
     public String getHostel() { return hostel; }
     public void setHostel(String hostel) { this.hostel = hostel; }
+    public String getDepartment() { return department; }
+    public void setDepartment(String department) { this.department = department; }
+    public String getRole() { return role; }
+    public void setRole(String role) { this.role = role; }
     public String getEmergencyContact() { return emergencyContact; }
     public void setEmergencyContact(String emergencyContact) { this.emergencyContact = emergencyContact; }
     public String getEmergencyPhone() { return emergencyPhone; }

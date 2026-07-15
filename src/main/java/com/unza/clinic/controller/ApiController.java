@@ -125,6 +125,8 @@ public class ApiController {
         patient.setSchool(isStudentPatientType(patientType) ? stringValue(request.school()) : "");
         patient.setYear(isStudentPatientType(patientType) ? request.year() : null);
         patient.setHostel(isStudentPatientType(patientType) ? stringValue(request.hostel()) : "");
+        patient.setDepartment(isStaffLinkedPatientType(patientType) ? stringValue(request.department()) : "");
+        patient.setRole(isStaffLinkedPatientType(patientType) ? stringValue(request.role()) : "");
         patient.setEmergencyContact(request.emergencyContact());
         patient.setEmergencyPhone(request.emergencyPhone());
         patient.setEmergencyRelation(request.emergencyRelation());
@@ -203,6 +205,8 @@ public class ApiController {
         patient.setSchool(isStudentPatientType(patientType) ? stringValue(request.school()) : "");
         patient.setYear(isStudentPatientType(patientType) ? request.year() : null);
         patient.setHostel(isStudentPatientType(patientType) ? stringValue(request.hostel()) : "");
+        patient.setDepartment(isStaffLinkedPatientType(patientType) ? stringValue(request.department()) : "");
+        patient.setRole(isStaffLinkedPatientType(patientType) ? stringValue(request.role()) : "");
         patient.setEmergencyContact(request.emergencyContact());
         patient.setEmergencyPhone(request.emergencyPhone());
         patient.setEmergencyRelation(request.emergencyRelation());
@@ -2439,6 +2443,8 @@ public class ApiController {
         response.put("school", patient.getSchool());
         response.put("year", patient.getYear());
         response.put("hostel", patient.getHostel());
+        response.put("department", patient.getDepartment());
+        response.put("role", patient.getRole());
         response.put("emergency_contact", patient.getEmergencyContact());
         response.put("emergency_phone", patient.getEmergencyPhone());
         response.put("emergency_relation", patient.getEmergencyRelation());

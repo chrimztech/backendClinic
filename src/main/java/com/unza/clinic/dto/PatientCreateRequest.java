@@ -19,6 +19,8 @@ public record PatientCreateRequest(
         String school,
         Integer year,
         String hostel,
+        String department,
+        String role,
         @NotBlank String emergencyContact,
         @NotBlank String emergencyPhone,
         String emergencyRelation,
