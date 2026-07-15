@@ -83,6 +83,7 @@ com\unza\clinic\model\EncounterRecord.class
 com\unza\clinic\service\WebSocketNotificationService.class
 com\unza\clinic\dto\QueueStatusUpdateRequest.class
 com\unza\clinic\model\TriageRecord.class
+com\unza\clinic\dto\AdmissionDischargeRequest.class
 com\unza\clinic\repository\PrescriptionRepository.class
 com\unza\clinic\dto\TriageCreateRequest.class
 com\unza\clinic\dto\ReferralCreateRequest.class
@@ -110,6 +111,7 @@ com\unza\clinic\model\ReferralRecord.class
 com\unza\clinic\service\CounselingTokenService.class
 com\unza\clinic\model\WardStatus.class
 com\unza\clinic\model\LabReferenceRange.class
+com\unza\clinic\security\RolePermissions.class
 com\unza\clinic\model\InsuranceClaim.class
 com\unza\clinic\repository\InsuranceClaimRepository.class
 com\unza\clinic\dto\SupplierCreateRequest.class
