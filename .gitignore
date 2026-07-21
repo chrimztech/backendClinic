@@ -2,6 +2,9 @@ target/
 logs/
 *.log
 
+# Data backups — may contain patient/staff PII, never commit these
+backups/
+
 # Compiled class files
 *.class
 
