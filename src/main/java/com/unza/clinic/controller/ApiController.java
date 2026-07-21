@@ -7,6 +7,7 @@ import com.unza.clinic.dto.*;
 import com.unza.clinic.model.LoginAuditLog;
 import com.unza.clinic.service.ClinicDataStore;
 import com.unza.clinic.service.DataBackupService;
+import com.unza.clinic.service.HrDirectoryService;
 import com.unza.clinic.service.LoginRateLimiter;
 import com.unza.clinic.service.RefreshTokenService;
 import com.unza.clinic.service.WebSocketNotificationService;
@@ -50,12 +51,13 @@ public class ApiController {
      private final WebSocketNotificationService wsService;
      private final LoginRateLimiter rateLimiter;
      private final RefreshTokenService refreshTokenService;
+     private final HrDirectoryService hrDirectoryService;
      private final ObjectMapper objectMapper = new ObjectMapper();
 
       public ApiController(ClinicDataStore dataStore, DataBackupService backupService, JwtUtil jwtUtil, JdbcTemplate jdbc,
                            com.unza.clinic.repository.PrescriptionItemRepository prescriptionItemRepository,
                            WebSocketNotificationService wsService, LoginRateLimiter rateLimiter,
-                           RefreshTokenService refreshTokenService) {
+                           RefreshTokenService refreshTokenService, HrDirectoryService hrDirectoryService) {
           this.dataStore = dataStore;
           this.backupService = backupService;
           this.jwtUtil = jwtUtil;
@@ -64,6 +66,7 @@ public class ApiController {
           this.wsService = wsService;
           this.rateLimiter = rateLimiter;
           this.refreshTokenService = refreshTokenService;
+          this.hrDirectoryService = hrDirectoryService;
       }
 
      @GetMapping("/")
@@ -229,34 +232,55 @@ public class ApiController {
     @GetMapping("/staff/lookup/man-number/{manNumber}")
     public Map<String, Object> lookupStaffByManNumber(HttpServletRequest httpRequest, @PathVariable String manNumber) {
         requireAnyPermission(httpRequest, List.of("walkin.view", "patients.view", "staff.view"));
-        StaffMember member = dataStore.getStaffMemberByManNumber(manNumber.trim());
+        String trimmedManNumber = manNumber.trim();
+        Patient existingPatient = dataStore.getPatients().stream()
+                .filter(p -> trimmedManNumber.equalsIgnoreCase(stringValue(p.getManNumber())))
+                .findFirst().orElse(null);
+
+        // Primary source: live lookup against the UNZA HR system (devhr.unza.zm)
+        Map<String, Object> hrRecord = hrDirectoryService.findByManNumber(trimmedManNumber);
+        if (hrRecord != null) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("found", true);
+            result.put("source", "hr_system");
+            result.put("name", HrDirectoryService.fullName(hrRecord));
+            result.put("department", stringValue(hrRecord.get("department")));
+            result.put("phone", stringValue(hrRecord.get("phone")));
+            result.put("email", stringValue(hrRecord.get("email")));
+            result.put("role", stringValue(hrRecord.get("job_title")));
+            result.put("gender", stringValue(hrRecord.get("gender")));
+            result.put("date_of_birth", stringValue(hrRecord.get("date_of_birth")));
+            result.put("employment_status", stringValue(hrRecord.get("employment_status")));
+            result.put("dependents", HrDirectoryService.dependents(hrRecord));
+            result.put("already_registered", existingPatient != null);
+            result.put("clinic_number", existingPatient != null ? stringValue(existingPatient.getClinicNumber()) : null);
+            return result;
+        }
+
+        // Fallback: local clinic staff roster (used when the HR system is unreachable/not configured)
+        StaffMember member = dataStore.getStaffMemberByManNumber(trimmedManNumber);
         if (member == null) {
-            // Also check the patients table for an existing staff patient record
-            Patient existing = dataStore.getPatients().stream()
-                    .filter(p -> manNumber.trim().equalsIgnoreCase(stringValue(p.getManNumber())))
-                    .findFirst().orElse(null);
-            if (existing != null) {
+            if (existingPatient != null) {
                 return Map.of("found", true, "source", "patient_record",
-                        "name", stringValue(existing.getName()),
+                        "name", stringValue(existingPatient.getName()),
                         "department", "",
-                        "phone", stringValue(existing.getPhone()),
-                        "email", stringValue(existing.getEmail()),
-                        "clinic_number", stringValue(existing.getClinicNumber()),
+                        "phone", stringValue(existingPatient.getPhone()),
+                        "email", stringValue(existingPatient.getEmail()),
+                        "clinic_number", stringValue(existingPatient.getClinicNumber()),
+                        "dependents", List.of(),
                         "already_registered", true);
             }
             return Map.of("found", false);
         }
-        Patient existingPatient = dataStore.getPatients().stream()
-                .filter(p -> manNumber.trim().equalsIgnoreCase(stringValue(p.getManNumber())))
-                .findFirst().orElse(null);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("found", true);
-        result.put("source", "hr_system");
+        result.put("source", "local_roster");
         result.put("name", stringValue(member.getName()));
         result.put("department", stringValue(member.getDepartment()));
         result.put("phone", stringValue(member.getPhone()));
         result.put("email", stringValue(member.getEmail()));
         result.put("role", stringValue(member.getRole()));
+        result.put("dependents", List.of());
         result.put("already_registered", existingPatient != null);
         result.put("clinic_number", existingPatient != null ? stringValue(existingPatient.getClinicNumber()) : null);
         return result;
@@ -596,44 +620,9 @@ public class ApiController {
         return Map.of("success", true, "message", "Medical record updated for student " + studentNumber);
     }
 
-    // HR System Integration
-    @GetMapping("/external/hr/staff/{staffNumber}")
-    public Map<String, Object> getStaffFromHR(@PathVariable String staffNumber) {
-        Map<String, Object> staff = new LinkedHashMap<>();
-        staff.put("staff_number", staffNumber);
-        staff.put("full_name", "Staff Member " + staffNumber);
-        staff.put("first_name", "Staff");
-        staff.put("last_name", staffNumber);
-        staff.put("date_of_birth", "1980-05-20");
-        staff.put("gender", "Female");
-        staff.put("email", "staff" + staffNumber + "@unza.ac.zm");
-        staff.put("phone", "+260977654321");
-        staff.put("address", "Great East Road Campus, Lusaka");
-        staff.put("department", "Computer Science");
-        staff.put("position", "Lecturer");
-        staff.put("requires_medical_exam", false);
-        staff.put("medical_exam_status", "exempted");
-        return staff;
-    }
-
-    @GetMapping("/external/hr/staff/search")
-    public List<Map<String, Object>> searchStaffByName(@RequestParam String name) {
-        List<Map<String, Object>> results = new ArrayList<>();
-        Map<String, Object> staff = new LinkedHashMap<>();
-        staff.put("staff_number", "EMP12345");
-        staff.put("full_name", name);
-        staff.put("date_of_birth", "1980-05-20");
-        staff.put("gender", "Female");
-        staff.put("email", name.toLowerCase().replace(" ", ".") + "@unza.ac.zm");
-        staff.put("phone", "+260977654321");
-        staff.put("department", "Computer Science");
-        staff.put("position", "Lecturer");
-        staff.put("requires_medical_exam", false);
-        staff.put("medical_exam_status", "exempted");
-        results.add(staff);
-        return results;
-    }
-
+    // HR System Integration — live staff/dependents lookups now served by ExternalHrController
+    // (/api/external/hr/staff/**). The medical-exam-tracking endpoints below are clinic-internal
+    // concepts not provided by the HR system, so they stay here.
     @GetMapping("/external/hr/staff/{staffNumber}/medical-status")
     public Map<String, Object> getStaffMedicalStatus(@PathVariable String staffNumber) {
         Patient patient = resolvePatient(staffNumber);
@@ -644,44 +633,6 @@ public class ApiController {
                 false,
                 "exempted"
         );
-    }
-
-    @GetMapping("/external/hr/staff/{staffNumber}/details")
-    public Map<String, Object> getStaffDetailsFromHR(@PathVariable String staffNumber) {
-        Map<String, Object> staff = getStaffFromHR(staffNumber);
-        List<Map<String, Object>> dependents = new ArrayList<>();
-        Map<String, Object> dependent = new LinkedHashMap<>();
-        dependent.put("name", "Child One");
-        dependent.put("date_of_birth", "2010-03-10");
-        dependent.put("relationship", "Child");
-        dependents.add(dependent);
-        staff.put("dependents", dependents);
-        return staff;
-    }
-
-    @GetMapping("/external/hr/staff/{staffNumber}/spouse")
-    public Map<String, Object> getStaffSpouse(@PathVariable String staffNumber) {
-        Map<String, Object> spouse = new LinkedHashMap<>();
-        spouse.put("name", "Spouse Name");
-        spouse.put("date_of_birth", "1985-08-25");
-        spouse.put("phone", "+260955111222");
-        return spouse;
-    }
-
-    @GetMapping("/external/hr/staff/{staffNumber}/dependents")
-    public List<Map<String, Object>> getStaffDependents(@PathVariable String staffNumber) {
-        List<Map<String, Object>> dependents = new ArrayList<>();
-        Map<String, Object> dependent1 = new LinkedHashMap<>();
-        dependent1.put("name", "Child One");
-        dependent1.put("date_of_birth", "2010-03-10");
-        dependent1.put("relationship", "Child");
-        dependents.add(dependent1);
-        Map<String, Object> dependent2 = new LinkedHashMap<>();
-        dependent2.put("name", "Child Two");
-        dependent2.put("date_of_birth", "2012-07-15");
-        dependent2.put("relationship", "Child");
-        dependents.add(dependent2);
-        return dependents;
     }
 
     @PutMapping("/external/hr/staff/{staffNumber}/medical-record")

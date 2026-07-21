@@ -76,3 +76,16 @@ app:
     expiration: ${UNZA_JWT_EXPIRATION:86400000}
   cors:
     allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:https://clinic.unza.ac.zm}
+  # UNZA HR system (staff & dependents metadata) — set via .env.backend / container env.
+  # Left blank-safe: lookups gracefully no-op if unconfigured or unreachable.
+  hr:
+    base-url: ${HR_SYSTEM_URL:}
+    service-username: ${HR_SERVICE_USERNAME:}
+    service-password: ${HR_SERVICE_PASSWORD:}
+    service-token: ${HR_SERVICE_TOKEN:}
+  # Counseling system — same pattern.
+  counseling:
+    base-url: ${COUNSELING_SYSTEM_URL:}
+    service-username: ${COUNSELING_SERVICE_USERNAME:}
+    service-password: ${COUNSELING_SERVICE_PASSWORD:}
+    service-token: ${COUNSELING_SERVICE_TOKEN:}
