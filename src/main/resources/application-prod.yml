@@ -83,6 +83,10 @@ app:
     service-username: ${HR_SERVICE_USERNAME:}
     service-password: ${HR_SERVICE_PASSWORD:}
     service-token: ${HR_SERVICE_TOKEN:}
+  # UNZA student records system (devoap.unza.zm) — single static Bearer token, no login flow.
+  sis:
+    base-url: ${SIS_SYSTEM_URL:}
+    token: ${SIS_SERVICE_TOKEN:}
   # Counseling system — same pattern.
   counseling:
     base-url: ${COUNSELING_SYSTEM_URL:}

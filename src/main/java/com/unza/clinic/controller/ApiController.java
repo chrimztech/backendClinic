@@ -10,6 +10,7 @@ import com.unza.clinic.service.DataBackupService;
 import com.unza.clinic.service.HrDirectoryService;
 import com.unza.clinic.service.LoginRateLimiter;
 import com.unza.clinic.service.RefreshTokenService;
+import com.unza.clinic.service.SisDirectoryService;
 import com.unza.clinic.service.WebSocketNotificationService;
 import com.unza.clinic.model.AuthUserDetails;
 import com.unza.clinic.util.JwtUtil;
@@ -52,12 +53,14 @@ public class ApiController {
      private final LoginRateLimiter rateLimiter;
      private final RefreshTokenService refreshTokenService;
      private final HrDirectoryService hrDirectoryService;
+     private final SisDirectoryService sisDirectoryService;
      private final ObjectMapper objectMapper = new ObjectMapper();
 
       public ApiController(ClinicDataStore dataStore, DataBackupService backupService, JwtUtil jwtUtil, JdbcTemplate jdbc,
                            com.unza.clinic.repository.PrescriptionItemRepository prescriptionItemRepository,
                            WebSocketNotificationService wsService, LoginRateLimiter rateLimiter,
-                           RefreshTokenService refreshTokenService, HrDirectoryService hrDirectoryService) {
+                           RefreshTokenService refreshTokenService, HrDirectoryService hrDirectoryService,
+                           SisDirectoryService sisDirectoryService) {
           this.dataStore = dataStore;
           this.backupService = backupService;
           this.jwtUtil = jwtUtil;
@@ -67,6 +70,7 @@ public class ApiController {
           this.rateLimiter = rateLimiter;
           this.refreshTokenService = refreshTokenService;
           this.hrDirectoryService = hrDirectoryService;
+          this.sisDirectoryService = sisDirectoryService;
       }
 
      @GetMapping("/")
@@ -187,7 +191,8 @@ public class ApiController {
     }
 
     @PostMapping("/patients")
-    public Map<String, Object> createPatient(@Valid @RequestBody PatientCreateRequest request) {
+    public Map<String, Object> createPatient(HttpServletRequest httpRequest, @Valid @RequestBody PatientCreateRequest request) {
+        requireAnyPermission(httpRequest, List.of("walkin.view", "patients.manage"));
         Patient patient = new Patient();
         String patientType = normalizePatientType(request.patientType());
         String clinicNumber = resolveClinicNumber(request.clinicNumber(), patientType, stringValue(request.studentId()), stringValue(request.manNumber()));
@@ -288,13 +293,15 @@ public class ApiController {
 
     /** SIS lookup — find student by computer number so registration can pre-fill details */
     @GetMapping("/patients/lookup/student-id/{studentId}")
-    public Map<String, Object> lookupStudentById(HttpServletRequest httpRequest, @PathVariable String studentId) {
+    public Map<String, Object> lookupStudentById(HttpServletRequest httpRequest, @PathVariable String studentId,
+                                                  @RequestParam(required = false) String instance) {
         requireAnyPermission(httpRequest, List.of("walkin.view", "patients.view"));
+        String trimmedStudentId = studentId.trim();
         Patient existing = dataStore.getPatients().stream()
-                .filter(p -> studentId.trim().equalsIgnoreCase(stringValue(p.getStudentId())))
+                .filter(p -> trimmedStudentId.equalsIgnoreCase(stringValue(p.getStudentId())))
                 .findFirst().orElse(null);
         if (existing != null) {
-            return Map.of("found", true, "source", "sis",
+            return Map.of("found", true, "source", "patient_record",
                     "name", stringValue(existing.getName()),
                     "program", stringValue(existing.getProgram()),
                     "school", stringValue(existing.getSchool()),
@@ -303,7 +310,43 @@ public class ApiController {
                     "already_registered", true,
                     "clinic_number", stringValue(existing.getClinicNumber()));
         }
-        return Map.of("found", false, "already_registered", false);
+
+        // Primary source: live lookup against the UNZA student records system (devoap.unza.zm)
+        Map<String, Object> sisRecord = sisDirectoryService.lookup(trimmedStudentId, instance);
+        if (sisRecord == null) {
+            return Map.of("found", false, "already_registered", false);
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("found", true);
+        result.put("source", "sis");
+        result.put("name", sisFullName(sisRecord));
+        result.put("program", stringValue(sisRecord.get("program")));
+        result.put("school", stringValue(sisRecord.get("school")));
+        result.put("phone", stringValue(sisRecord.get("phone_number")));
+        result.put("email", stringValue(sisRecord.get("email")));
+        result.put("gender", sisNormalizeGender(stringValue(sisRecord.get("gender"))));
+        result.put("date_of_birth", stringValue(sisRecord.get("date_of_birth")));
+        result.put("year", sisRecord.get("year_of_program"));
+        result.put("instance", stringValue(sisRecord.get("instance")));
+        result.put("already_registered", false);
+        result.put("clinic_number", null);
+        return result;
+    }
+
+    private String sisFullName(Map<String, Object> student) {
+        return java.util.stream.Stream.of(stringValue(student.get("first_name")), stringValue(student.get("middle_name")), stringValue(student.get("last_name")))
+                .filter(s -> !s.isBlank())
+                .collect(Collectors.joining(" "));
+    }
+
+    private String sisNormalizeGender(String raw) {
+        String g = raw.trim().toUpperCase();
+        return switch (g) {
+            case "M", "MALE" -> "Male";
+            case "F", "FEMALE" -> "Female";
+            case "" -> "";
+            default -> "Other";
+        };
     }
 
     @PostMapping("/staff")
@@ -562,46 +605,9 @@ public class ApiController {
 
     // ==================== EXTERNAL SYSTEM INTEGRATION ====================
 
-    // Student Information System (SIS) Integration
-    @GetMapping("/external/sis/students/{studentNumber}")
-    public Map<String, Object> getStudentFromSIS(@PathVariable String studentNumber) {
-        // In production, this would call the actual SIS API
-        // For now, return mock data based on student number pattern
-        Map<String, Object> student = new LinkedHashMap<>();
-        student.put("student_number", studentNumber);
-        student.put("full_name", "Student " + studentNumber);
-        student.put("first_name", "Student");
-        student.put("last_name", studentNumber);
-        student.put("date_of_birth", "2000-01-15");
-        student.put("gender", "Male");
-        student.put("email", studentNumber.toLowerCase() + "@unza.ac.zm");
-        student.put("phone", "+260971234567");
-        student.put("address", "Great East Road Campus, Lusaka");
-        student.put("program", "Bachelor of Medicine");
-        student.put("year_of_study", 3);
-        student.put("requires_medical_exam", true);
-        student.put("medical_exam_status", "pending");
-        return student;
-    }
-
-    @GetMapping("/external/sis/students/search")
-    public List<Map<String, Object>> searchStudentsByName(@RequestParam String name) {
-        List<Map<String, Object>> results = new ArrayList<>();
-        Map<String, Object> student = new LinkedHashMap<>();
-        student.put("student_number", "2023123456");
-        student.put("full_name", name);
-        student.put("date_of_birth", "2000-01-15");
-        student.put("gender", "Male");
-        student.put("email", name.toLowerCase().replace(" ", ".") + "@unza.ac.zm");
-        student.put("phone", "+260971234567");
-        student.put("program", "Bachelor of Medicine");
-        student.put("year_of_study", 3);
-        student.put("requires_medical_exam", true);
-        student.put("medical_exam_status", "pending");
-        results.add(student);
-        return results;
-    }
-
+    // Student records (SIS) integration — live student lookups now served by ExternalSisController
+    // (/api/external/sis/students/**). The medical-exam-tracking endpoints below are clinic-internal
+    // concepts not provided by the student records system, so they stay here.
     @GetMapping("/external/sis/students/{studentNumber}/medical-status")
     public Map<String, Object> getStudentMedicalStatus(@PathVariable String studentNumber) {
         Patient patient = resolvePatient(studentNumber);
