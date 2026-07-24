@@ -79,7 +79,7 @@ app:
   # UNZA HR system (staff & dependents metadata) — set via .env.backend / container env.
   # Left blank-safe: lookups gracefully no-op if unconfigured or unreachable.
   hr:
-    base-url: ${HR_SYSTEM_URL:}
+    base-url: ${HR_SYSTEM_URL:https://hr.unza.zm}
     service-username: ${HR_SERVICE_USERNAME:}
     service-password: ${HR_SERVICE_PASSWORD:}
     service-token: ${HR_SERVICE_TOKEN:}
