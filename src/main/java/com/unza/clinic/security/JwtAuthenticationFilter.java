@@ -124,7 +124,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                path.startsWith("/swagger-ui") ||
                path.startsWith("/v3/api-docs") ||
                path.startsWith("/ws") ||
-               path.equals("/");
+               path.equals("/") ||
+               // Service-to-service cross-system callbacks: authenticated via the
+               // X-Service-Api-Key header inside the controller, not a user JWT.
+               path.startsWith("/api/external/counseling/security-alerts/inbound") ||
+               path.equals("/api/external/counseling/inbound/visit");
     }
 
     private String[] resolveRequiredPermissions(HttpServletRequest request) {
@@ -224,6 +228,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
         if (path.startsWith("/api/clinical-forms")) {
             return new String[] { "forms.view" };
+        }
+        if (path.startsWith("/api/security-alerts")) {
+            if (path.endsWith("/acknowledge")) return new String[] { "security.acknowledge" };
+            if (path.endsWith("/resolve")) return new String[] { "security.resolve" };
+            if ("POST".equals(method)) return new String[] { "security.report" };
+            return new String[] { "security.view" };
         }
         return new String[0];
     }

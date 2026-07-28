@@ -35,6 +35,12 @@ public class SecurityConfig {
                 .requestMatchers("/api/login", "/api/health").permitAll()
                 .requestMatchers("/api/auth/refresh", "/api/auth/logout").permitAll()
                 .requestMatchers("/api/admin/clear-seeded-data", "/api/seed-users").hasRole("ADMIN")
+                // Service-to-service cross-system callbacks (clinic <-> counselling).
+                // These bypass the normal user JWT filter entirely; the caller is a
+                // backend service authenticated via the X-Service-Api-Key header
+                // checked inside the controller, not a logged-in user.
+                .requestMatchers("/api/external/counseling/security-alerts/inbound/**",
+                                  "/api/external/counseling/inbound/visit").permitAll()
                 .requestMatchers("/api/**").authenticated()
                 .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
                 // WebSocket handshake endpoints

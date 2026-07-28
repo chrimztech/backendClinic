@@ -1,7 +1,10 @@
 package com.unza.clinic.controller;
 
 import com.unza.clinic.config.CounselingProperties;
+import com.unza.clinic.model.Patient;
+import com.unza.clinic.repository.PatientRepository;
 import com.unza.clinic.service.CounselingTokenService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -38,11 +41,17 @@ public class ExternalCounselingController {
     private final RestTemplate rest = new RestTemplate();
     private final CounselingProperties props;
     private final CounselingTokenService tokenService;
+    private final PatientRepository patientRepository;
+
+    @Value("${app.cross-system.api-key:}")
+    private String crossSystemApiKey;
 
     public ExternalCounselingController(CounselingProperties props,
-                                        CounselingTokenService tokenService) {
+                                        CounselingTokenService tokenService,
+                                        PatientRepository patientRepository) {
         this.props        = props;
         this.tokenService = tokenService;
+        this.patientRepository = patientRepository;
     }
 
     // ------------------------------------------------------------------
@@ -172,15 +181,27 @@ public class ExternalCounselingController {
     // Inbound webhook — counseling system pushes visits back here
     // Configure this URL in the counseling system:
     //   POST https://<clinic-host>/api/external/counseling/inbound/visit
+    // Requires the shared X-Service-Api-Key header (service-to-service call,
+    // no user JWT is available on the caller side).
     // ------------------------------------------------------------------
     @PostMapping("/inbound/visit")
-    public ResponseEntity<?> receiveInboundVisit(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<?> receiveInboundVisit(@RequestHeader(value = "X-Service-Api-Key", required = false) String apiKey,
+                                                  @RequestBody Map<String, Object> body) {
+        if (!isValidServiceApiKey(apiKey)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(err("Invalid or missing X-Service-Api-Key"));
+        }
         Map<String, Object> ack = new LinkedHashMap<>();
         ack.put("received", true);
         ack.put("clientId", body.get("clientId"));
         ack.put("visitDate", body.get("visitDate"));
         ack.put("message", "Visit notification acknowledged");
         return ResponseEntity.ok(ack);
+    }
+
+    /** Shared-secret check for inbound service-to-service calls from the counseling system. */
+    private boolean isValidServiceApiKey(String provided) {
+        return crossSystemApiKey != null && !crossSystemApiKey.isBlank()
+                && crossSystemApiKey.equals(provided);
     }
 
     // ------------------------------------------------------------------
@@ -202,16 +223,35 @@ public class ExternalCounselingController {
         return Map.of("error", msg);
     }
 
-    /** Translates clinic referral payload → counseling system fields. */
+    /**
+     * Translates clinic referral payload → counseling system fields.
+     * patientId/externalId are kept for backward compat, but we also resolve and
+     * send the patient's studentId (when known) so the counseling system can match
+     * on that reliable, unique key instead of the clinic-internal patientId.
+     */
     private Map<String, Object> toCouns(Map<String, Object> src) {
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("clientId",   src.get("patientId"));
+        Object patientId = src.get("patientId");
+        out.put("clientId",   patientId);
         out.put("urgency",    mapUrgency((String) src.get("urgency")));
         out.put("reason",     src.getOrDefault("reason", ""));
         out.put("notes",      src.getOrDefault("notes", ""));
         out.put("referredBy", src.getOrDefault("referredBy", "Clinic"));
-        out.put("externalId", src.get("patientId"));
+        out.put("externalId", patientId);
+
+        String studentId = resolveStudentId(patientId);
+        if (studentId != null && !studentId.isBlank()) {
+            out.put("studentId", studentId);
+        }
         return out;
+    }
+
+    /** Looks up the patient's studentId (reliable, unique shared identity key) by clinic patientId. */
+    private String resolveStudentId(Object patientId) {
+        if (patientId == null) return null;
+        return patientRepository.findByPatientId(String.valueOf(patientId))
+                .map(Patient::getStudentId)
+                .orElse(null);
     }
 
     /** low/medium/high → NORMAL/URGENT/EMERGENCY */
