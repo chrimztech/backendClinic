@@ -37,6 +37,12 @@ public class EncounterRecord {
     private String assignedTo;
     @Column(name = "department_entered_at", length = 50)
     private String departmentEnteredAt;
+    @Column(name = "visit_outcome", length = 40)
+    private String visitOutcome;
+    @Column(name = "ended_at", length = 50)
+    private String endedAt;
+    @Column(name = "ended_by", length = 120)
+    private String endedBy;
     @Lob
     @Column(length = 8000)
     private String stageHistory;
@@ -88,6 +94,12 @@ public class EncounterRecord {
     public void setAssignedTo(String assignedTo) { this.assignedTo = assignedTo; }
     public String getDepartmentEnteredAt() { return departmentEnteredAt; }
     public void setDepartmentEnteredAt(String departmentEnteredAt) { this.departmentEnteredAt = departmentEnteredAt; }
+    public String getVisitOutcome() { return visitOutcome; }
+    public void setVisitOutcome(String visitOutcome) { this.visitOutcome = visitOutcome; }
+    public String getEndedAt() { return endedAt; }
+    public void setEndedAt(String endedAt) { this.endedAt = endedAt; }
+    public String getEndedBy() { return endedBy; }
+    public void setEndedBy(String endedBy) { this.endedBy = endedBy; }
     public String getStageHistory() { return stageHistory; }
     public void setStageHistory(String stageHistory) { this.stageHistory = stageHistory; }
     public String getPendingActions() { return pendingActions; }

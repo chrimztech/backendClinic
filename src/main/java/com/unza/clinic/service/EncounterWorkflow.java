@@ -20,6 +20,7 @@ public final class EncounterWorkflow {
 
     private static final Map<String, List<String>> TRANSITIONS;
     private static final Map<String, List<String>> STAGE_TASKS;
+    private static final Map<String, Integer> STAGE_SLA_MINUTES;
     private static final Set<String> QUEUE_STATUSES = Set.of("WAITING", "IN_PROGRESS", "ON_HOLD");
     private static final Set<String> PRIORITIES = Set.of("ROUTINE", "PRIORITY", "URGENT", "EMERGENCY");
 
@@ -63,6 +64,26 @@ public final class EncounterWorkflow {
         tasks.put("INPATIENT", List.of("Admission documentation", "Ward handover"));
         tasks.put("CHECKOUT", List.of());
         STAGE_TASKS = Collections.unmodifiableMap(new LinkedHashMap<>(tasks));
+
+        Map<String, Integer> slaMinutes = new LinkedHashMap<>();
+        slaMinutes.put("RECEPTION", 15);
+        slaMinutes.put("TRIAGE", 15);
+        slaMinutes.put("CONSULTATION", 30);
+        slaMinutes.put("EMERGENCY", 5);
+        slaMinutes.put("LABORATORY", 45);
+        slaMinutes.put("RADIOLOGY", 60);
+        slaMinutes.put("PHARMACY", 20);
+        slaMinutes.put("ACCOUNTS", 15);
+        slaMinutes.put("MCH", 30);
+        slaMinutes.put("ART", 30);
+        slaMinutes.put("DENTAL", 30);
+        slaMinutes.put("EYE", 30);
+        slaMinutes.put("STI", 30);
+        slaMinutes.put("PHYSIOTHERAPY", 30);
+        slaMinutes.put("COUNSELING", 30);
+        slaMinutes.put("INPATIENT", 20);
+        slaMinutes.put("CHECKOUT", 10);
+        STAGE_SLA_MINUTES = Collections.unmodifiableMap(slaMinutes);
     }
 
     private static List<String> specialistDestinations() {
@@ -79,6 +100,34 @@ public final class EncounterWorkflow {
 
     public static List<String> tasksForStage(String stage) {
         return STAGE_TASKS.getOrDefault(normalizeStage(stage), List.of());
+    }
+
+    /** Permission required to view or operate a department queue. */
+    public static String permissionForStage(String stage) {
+        return switch (normalizeStage(stage)) {
+            case "RECEPTION" -> "walkin.view";
+            case "TRIAGE" -> "triage.view";
+            case "CONSULTATION" -> "forms.view";
+            case "EMERGENCY" -> "emergency.view";
+            case "LABORATORY" -> "laboratory.view";
+            case "RADIOLOGY" -> "radiology.view";
+            case "PHARMACY" -> "pharmacy.view";
+            case "ACCOUNTS" -> "billing.view";
+            case "MCH" -> "mch.view";
+            case "ART" -> "art.view";
+            case "DENTAL" -> "dental.view";
+            case "EYE" -> "eye.view";
+            case "STI" -> "sti.view";
+            case "PHYSIOTHERAPY" -> "physio.view";
+            case "COUNSELING" -> "counseling.view";
+            case "INPATIENT" -> "admissions.view";
+            case "CHECKOUT" -> "records.view";
+            default -> throw new IllegalArgumentException("Unknown encounter stage: " + stage);
+        };
+    }
+
+    public static int slaMinutesForStage(String stage) {
+        return STAGE_SLA_MINUTES.getOrDefault(normalizeStage(stage), 30);
     }
 
     public static boolean canTransition(String currentStage, String targetStage) {

@@ -6,6 +6,7 @@ import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
+import java.util.Locale;
 
 /**
  * Broadcasts real-time events to connected WebSocket clients via STOMP topics.
@@ -25,8 +26,25 @@ public class WebSocketNotificationService {
         messagingTemplate.convertAndSend("/topic/notifications", notification);
     }
 
-    public void broadcastQueueUpdate(Object queueData) {
-        messagingTemplate.convertAndSend("/topic/queue", queueData);
+    public void broadcastQueueUpdate(String currentStage, Object queueData) {
+        broadcastQueueUpdate(null, currentStage, queueData);
+    }
+
+    /**
+     * Identifiable queue data is sent only to the destination department. The
+     * source department receives a metadata-only refresh after a hand-off.
+     */
+    public void broadcastQueueUpdate(String previousStage, String currentStage, Object queueData) {
+        String destinationStage = safeStage(currentStage);
+        if (destinationStage.isBlank()) destinationStage = "UNKNOWN";
+        Map<String, Object> signal = Map.of("event", "QUEUE_CHANGED", "stage", destinationStage);
+        messagingTemplate.convertAndSend("/topic/queue", signal);
+        messagingTemplate.convertAndSend("/topic/queue/" + destinationStage, queueData);
+
+        String sourceStage = safeStage(previousStage);
+        if (!sourceStage.isBlank() && !sourceStage.equals(destinationStage)) {
+            messagingTemplate.convertAndSend("/topic/queue/" + sourceStage, signal);
+        }
     }
 
     public void broadcastLabResult(Object labResult) {
@@ -56,5 +74,10 @@ public class WebSocketNotificationService {
 
     private String nvl(String s) {
         return s != null ? s : "";
+    }
+
+    private String safeStage(String stage) {
+        String normalized = nvl(stage).trim().replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT);
+        return normalized.matches("[A-Z_]+") ? normalized : "";
     }
 }

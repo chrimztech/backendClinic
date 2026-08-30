@@ -31,4 +31,12 @@ class EncounterWorkflowTests {
         assertThrows(IllegalArgumentException.class, () -> EncounterWorkflow.normalizeStage("unknown-room"));
         assertThrows(IllegalArgumentException.class, () -> EncounterWorkflow.normalizePriority("whenever"));
     }
+
+    @Test
+    void queuesHaveDepartmentPermissionsAndResponseTargets() {
+        assertEquals("walkin.view", EncounterWorkflow.permissionForStage("RECEPTION"));
+        assertEquals("laboratory.view", EncounterWorkflow.permissionForStage("LABORATORY"));
+        assertEquals(5, EncounterWorkflow.slaMinutesForStage("EMERGENCY"));
+        assertEquals(30, EncounterWorkflow.slaMinutesForStage("CONSULTATION"));
+    }
 }

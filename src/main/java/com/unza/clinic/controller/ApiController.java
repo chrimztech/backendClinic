@@ -29,6 +29,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.time.format.TextStyle;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -791,8 +792,11 @@ public class ApiController {
         }
 
         prescription.setStatus("dispensed");
+        prescription.setDispensedBy(actor.getName());
+        prescription.setDispensedAt(LocalDateTime.now());
         prescription = dataStore.updatePrescription(prescription);
         writeAuditLog(actor.getName(), actor.getRole(), "update", "Dispensed prescription " + prescription.getRxId() + " (" + lineItems.size() + " item(s)).", "127.0.0.1");
+        routeAfterPharmacyDispense(prescription.getPatientId(), actor.getName());
         return Map.of("success", true, "entry", toPrescriptionResponse(prescription));
     }
 
@@ -931,8 +935,10 @@ public class ApiController {
         labTest.setReferenceRange(stringValue(request.referenceRange()));
         labTest.setAbnormalFlag(hasText(request.abnormalFlag()) ? request.abnormalFlag().trim() : "normal");
         labTest.setSpecimenCollectedAt(stringValue(firstNonBlank(request.specimenCollectedAt(), labTest.getSpecimenCollectedAt(), LocalDateTime.now().toString())));
-        labTest.setApprovedBy(resolveActorName(actor, request.approvedBy(), stringValue(labTest.getApprovedBy())));
-        labTest.setApprovedAt(LocalDateTime.now().toString());
+        if (hasText(request.approvedBy())) {
+            labTest.setApprovedBy(resolveActorName(actor, request.approvedBy(), "Laboratory User"));
+            labTest.setApprovedAt(LocalDateTime.now().toString());
+        }
         labTest.setStatus("completed");
         labTest = dataStore.updateLabTest(labTest);
 
@@ -944,7 +950,41 @@ public class ApiController {
         notif.setRead(false);
         dataStore.addNotification(notif);
 
-        return Map.of("success", true, "entry", toLabTestResponse(labTest));
+        if (hasText(labTest.getApprovedBy()) && allCurrentLabTestsApproved(labTest.getPatientId())) {
+            routeActiveEncounter(labTest.getPatientId(), "LABORATORY", "CONSULTATION", actor.getName(),
+                    "Laboratory results completed and approved");
+        }
+
+        Map<String, Object> response = toLabTestResponse(labTest);
+        wsService.broadcastLabResult(response);
+        return Map.of("success", true, "entry", response);
+    }
+
+    @PutMapping("/lab-tests/{id}/approve")
+    public Map<String, Object> approveLabResults(HttpServletRequest httpRequest, @PathVariable Long id) {
+        AppUser actor = requirePermission(httpRequest, "laboratory.view");
+        LabTest labTest = dataStore.getLabTest(id);
+        if (labTest == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Lab test not found");
+        }
+        if (!isEqualIgnoreCase(labTest.getStatus(), "completed") || isBlank(labTest.getResults())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Results must be completed before approval");
+        }
+        if (isBlank(labTest.getApprovedBy())) {
+            labTest.setApprovedBy(actor.getName());
+            labTest.setApprovedAt(LocalDateTime.now().toString());
+            labTest = dataStore.updateLabTest(labTest);
+            writeAuditLog(actor.getName(), actor.getRole(), "approve",
+                    "Approved laboratory result " + labTest.getTestId(), "127.0.0.1");
+        }
+
+        if (allCurrentLabTestsApproved(labTest.getPatientId())) {
+            routeActiveEncounter(labTest.getPatientId(), "LABORATORY", "CONSULTATION", actor.getName(),
+                    "Laboratory results completed and approved");
+        }
+        Map<String, Object> response = toLabTestResponse(labTest);
+        wsService.broadcastLabResult(response);
+        return Map.of("success", true, "entry", response);
     }
 
     @GetMapping("/billing")
@@ -1061,6 +1101,7 @@ public class ApiController {
         invoice.setPaidDate("");
         invoice.setPaymentMethod(stringValue(request.paymentMethod()));
         invoice = dataStore.addBillingInvoice(invoice);
+        updateActiveEncounterPayment(invoice.getPatientId(), "PENDING", "Billing invoice created");
         return Map.of("success", true, "invoice_id", invoice.getInvoiceId(), "entry", toBillingResponse(invoice));
     }
 
@@ -1073,6 +1114,10 @@ public class ApiController {
         }
 
         String nextStatus = isBlank(request.status()) ? invoice.getStatus() : request.status().trim().toLowerCase(Locale.ROOT);
+        if (!List.of("pending", "completed", "cancelled").contains(nextStatus)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Billing status must be pending, completed, or cancelled");
+        }
         invoice.setStatus(nextStatus);
         if (!isBlank(request.paymentMethod())) {
             invoice.setPaymentMethod(request.paymentMethod().trim());
@@ -1084,6 +1129,14 @@ public class ApiController {
         }
 
         invoice = dataStore.addBillingInvoice(invoice);
+        if (isEqualIgnoreCase(nextStatus, "completed")) {
+            updateActiveEncounterPayment(invoice.getPatientId(), "CLEARED", "Payment completed");
+            AppUser actor = requireAuthenticatedUser(httpRequest);
+            routeActiveEncounter(invoice.getPatientId(), "ACCOUNTS", "CHECKOUT", actor.getName(),
+                    "Payment cleared; ready for checkout");
+        } else if (isEqualIgnoreCase(nextStatus, "pending")) {
+            updateActiveEncounterPayment(invoice.getPatientId(), "PENDING", "Payment pending");
+        }
         return Map.of("success", true, "entry", toBillingResponse(invoice));
     }
 
@@ -1360,6 +1413,33 @@ public class ApiController {
         imagingRequest.setStatus("pending");
         imagingRequest = dataStore.addImagingRequest(imagingRequest);
         return Map.of("success", true, "request_id", imagingRequest.getRequestId(), "entry", toImagingResponse(imagingRequest));
+    }
+
+    @PutMapping("/imaging/{id}/results")
+    public Map<String, Object> saveImagingResults(HttpServletRequest httpRequest, @PathVariable Long id,
+                                                   @Valid @RequestBody ImagingResultUpdateRequest request) {
+        AppUser actor = requirePermission(httpRequest, "radiology.view");
+        ImagingRequest imagingRequest = dataStore.getImagingRequests().stream()
+                .filter(item -> Objects.equals(item.getId(), id))
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Imaging request not found"));
+
+        String status = hasText(request.status()) ? request.status().trim().toLowerCase(Locale.ROOT) : "completed";
+        if (!List.of("in-progress", "completed").contains(status)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Imaging status must be in-progress or completed");
+        }
+        imagingRequest.setFindings(request.findings().trim());
+        imagingRequest.setRadiologist(resolveActorName(actor, request.radiologist(), "Radiology User"));
+        imagingRequest.setStatus(status);
+        imagingRequest = dataStore.updateImagingRequest(imagingRequest);
+        writeAuditLog(actor.getName(), actor.getRole(), "update",
+                "Recorded imaging results for " + imagingRequest.getRequestId(), "127.0.0.1");
+
+        if ("completed".equals(status)) {
+            routeActiveEncounter(imagingRequest.getPatientId(), "RADIOLOGY", "CONSULTATION", actor.getName(),
+                    "Imaging completed and report released");
+        }
+        return Map.of("success", true, "entry", toImagingResponse(imagingRequest));
     }
 
     @GetMapping("/insurance-claims")
@@ -1995,9 +2075,25 @@ public class ApiController {
     public Object getEncounters(HttpServletRequest httpRequest,
                                 @RequestParam(required = false) Integer page,
                                 @RequestParam(required = false) Integer size) {
-        requireAnyPermission(httpRequest, ENCOUNTER_ACCESS_PERMISSIONS);
-        List<Map<String, Object>> all = dataStore.getEncounterRecords().stream().map(this::toEncounterResponse).toList();
+        AppUser actor = requireAnyPermission(httpRequest, ENCOUNTER_ACCESS_PERMISSIONS);
+        List<Map<String, Object>> all = dataStore.getEncounterRecords().stream()
+                .filter(record -> canAccessEncounterStage(actor, record.getCurrentStage()))
+                .map(this::toEncounterResponse)
+                .toList();
         return paginate(all, page, size);
+    }
+
+    @GetMapping("/encounters/queue-summary")
+    public List<Map<String, Object>> getEncounterQueueSummary(HttpServletRequest httpRequest) {
+        AppUser actor = requireAnyPermission(httpRequest, ENCOUNTER_ACCESS_PERMISSIONS);
+        List<EncounterRecord> visible = dataStore.getEncounterRecords().stream()
+                .filter(record -> !record.isCheckedOut())
+                .filter(record -> canAccessEncounterStage(actor, record.getCurrentStage()))
+                .toList();
+        return EncounterWorkflow.stages().stream()
+                .filter(stage -> canAccessEncounterStage(actor, stage))
+                .map(stage -> buildQueueStageSummary(stage, visible))
+                .toList();
     }
 
     @PostMapping("/encounters")
@@ -2031,6 +2127,9 @@ public class ApiController {
         record.setPriority("ROUTINE");
         record.setAssignedTo("");
         record.setDepartmentEnteredAt(record.getCreatedAt());
+        record.setVisitOutcome("ACTIVE");
+        record.setEndedAt("");
+        record.setEndedBy("");
         record.setStageHistory(LocalDateTime.now() + "|" + record.getCurrentStage() + "|" + record.getCreatedBy() + "|Encounter opened");
         record.setPendingActions(String.join(", ", EncounterWorkflow.tasksForStage(record.getCurrentStage())));
         record.setCompletedActions("Registration");
@@ -2038,7 +2137,7 @@ public class ApiController {
         record = dataStore.addEncounterRecord(record);
         writeAuditLog(record.getCreatedBy(), "create", "Opened encounter " + record.getEncounterId() + " for " + record.getPatientName(), "127.0.0.1");
         Map<String, Object> response = toEncounterResponse(record);
-        wsService.broadcastQueueUpdate(response);
+        wsService.broadcastQueueUpdate(record.getCurrentStage(), response);
         return Map.of("success", true, "encounter_id", record.getEncounterId(), "entry", response);
     }
 
@@ -2055,14 +2154,16 @@ public class ApiController {
         requireEncounterStageAccess(actor, record.getCurrentStage());
 
         String currentStage = normalizeStage(record.getCurrentStage());
+        String previousStage = currentStage;
         String stage = hasText(request.stage()) ? normalizeStage(request.stage()) : currentStage;
         String performedBy = resolveActorName(actor, request.performedBy(), "Clinic User");
         String note = hasText(request.note()) ? request.note().trim() : "Stage updated";
 
-        if ((isEqualIgnoreCase(defaultQueueStatus(record), "IN_PROGRESS") || isEqualIgnoreCase(defaultQueueStatus(record), "ON_HOLD"))
-                && hasText(record.getAssignedTo())
+        boolean claimedByAnother = hasText(record.getAssignedTo())
                 && !isEqualIgnoreCase(record.getAssignedTo(), performedBy)
-                && !isEqualIgnoreCase(actor.getRole(), "Admin")) {
+                && !isEqualIgnoreCase(actor.getRole(), "Admin");
+        if (claimedByAnother && (isEqualIgnoreCase(defaultQueueStatus(record), "IN_PROGRESS")
+                || isEqualIgnoreCase(defaultQueueStatus(record), "ON_HOLD"))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "This patient is already being served by " + record.getAssignedTo());
         }
@@ -2097,7 +2198,7 @@ public class ApiController {
         dataStore.updateEncounterRecord(record);
         writeAuditLog(performedBy, "update", "Moved encounter " + record.getEncounterId() + " to " + stage, "127.0.0.1");
         Map<String, Object> response = toEncounterResponse(record);
-        wsService.broadcastQueueUpdate(response);
+        wsService.broadcastQueueUpdate(previousStage, record.getCurrentStage(), response);
         return Map.of("success", true, "entry", response);
     }
 
@@ -2118,10 +2219,12 @@ public class ApiController {
         String performedBy = resolveActorName(actor, request.performedBy(), "Clinic User");
         String note = hasText(request.note()) ? request.note().trim() : queueStatusNote(status);
 
-        if ((isEqualIgnoreCase(defaultQueueStatus(record), "IN_PROGRESS") || isEqualIgnoreCase(defaultQueueStatus(record), "ON_HOLD"))
-                && hasText(record.getAssignedTo())
+        boolean claimedByAnother = hasText(record.getAssignedTo())
                 && !isEqualIgnoreCase(record.getAssignedTo(), performedBy)
-                && !isEqualIgnoreCase(actor.getRole(), "Admin")) {
+                && !isEqualIgnoreCase(actor.getRole(), "Admin");
+        if (claimedByAnother && (isEqualIgnoreCase(status, "IN_PROGRESS")
+                || isEqualIgnoreCase(defaultQueueStatus(record), "IN_PROGRESS")
+                || isEqualIgnoreCase(defaultQueueStatus(record), "ON_HOLD"))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
                     "This patient is already being served by " + record.getAssignedTo());
         }
@@ -2141,7 +2244,109 @@ public class ApiController {
         dataStore.updateEncounterRecord(record);
         writeAuditLog(performedBy, "queue_update", "Updated encounter " + record.getEncounterId() + " to " + status, "127.0.0.1");
         Map<String, Object> response = toEncounterResponse(record);
-        wsService.broadcastQueueUpdate(response);
+        wsService.broadcastQueueUpdate(record.getCurrentStage(), response);
+        return Map.of("success", true, "entry", response);
+    }
+
+    @PutMapping("/encounters/{id}/outcome")
+    public Map<String, Object> endEncounter(HttpServletRequest httpRequest, @PathVariable Long id,
+                                             @RequestBody EncounterOutcomeRequest request) {
+        AppUser actor = requireAnyPermission(httpRequest, ENCOUNTER_ACCESS_PERMISSIONS);
+        EncounterRecord record = dataStore.getEncounterRecord(id);
+        if (record == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Encounter not found");
+        }
+        if (record.isCheckedOut()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "This encounter has already ended");
+        }
+        requireEncounterStageAccess(actor, record.getCurrentStage());
+
+        String outcome = stringValue(request.outcome()).trim().replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT);
+        if (!List.of("CANCELLED", "LEFT_WITHOUT_SERVICE", "NO_SHOW").contains(outcome)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Outcome must be CANCELLED, LEFT_WITHOUT_SERVICE, or NO_SHOW");
+        }
+        if (("CANCELLED".equals(outcome) || "NO_SHOW".equals(outcome))
+                && !EncounterWorkflow.RECEPTION.equalsIgnoreCase(record.getCurrentStage())
+                && !isEqualIgnoreCase(actor.getRole(), "Admin")) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Only reception or an administrator can cancel a visit or mark it as a no-show");
+        }
+
+        String performedBy = resolveActorName(actor, request.performedBy(), "Clinic User");
+        String note = hasText(request.note()) ? request.note().trim() : switch (outcome) {
+            case "NO_SHOW" -> "Patient did not attend";
+            case "LEFT_WITHOUT_SERVICE" -> "Patient left before service was completed";
+            default -> "Visit cancelled";
+        };
+        String endedAt = LocalDateTime.now().toString();
+        record.setCheckedOut(true);
+        record.setCheckoutEligible(false);
+        record.setQueueStatus("CLOSED");
+        record.setAssignedTo("");
+        record.setVisitOutcome(outcome);
+        record.setEndedAt(endedAt);
+        record.setEndedBy(performedBy);
+        record.setCheckoutTime(endedAt);
+        record.setUpdatedAt(endedAt);
+        record.setStageHistory(appendHistory(record.getStageHistory(), endedAt + "|" + record.getCurrentStage()
+                + "|" + performedBy + "|" + note));
+        record.setNotes(appendHistory(record.getNotes(), note));
+
+        dataStore.updateEncounterRecord(record);
+        writeAuditLog(performedBy, "encounter_outcome",
+                "Ended encounter " + record.getEncounterId() + " as " + outcome, "127.0.0.1");
+        Map<String, Object> response = toEncounterResponse(record);
+        wsService.broadcastQueueUpdate(record.getCurrentStage(), response);
+        return Map.of("success", true, "entry", response);
+    }
+
+    @PutMapping("/encounters/{id}/assignment")
+    public Map<String, Object> assignEncounter(HttpServletRequest httpRequest, @PathVariable Long id,
+                                                @RequestBody EncounterAssignmentRequest request) {
+        AppUser actor = requirePermission(httpRequest, "users.manage");
+        EncounterRecord record = dataStore.getEncounterRecord(id);
+        if (record == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Encounter not found");
+        }
+        if (record.isCheckedOut()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ended encounters cannot be reassigned");
+        }
+
+        String requestedAssignee = stringValue(request.assignedTo()).trim();
+        String assignee = requestedAssignee;
+        if (!requestedAssignee.isBlank()) {
+            AppUser target = dataStore.getUsers().stream()
+                    .filter(user -> isEqualIgnoreCase(user.getName(), requestedAssignee)
+                            || isEqualIgnoreCase(user.getEmail(), requestedAssignee)
+                            || isEqualIgnoreCase(user.getUserId(), requestedAssignee))
+                    .findFirst()
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected assignee was not found"));
+            if (!isEqualIgnoreCase(target.getStatus(), "active")) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected assignee is inactive");
+            }
+            if (!canAccessEncounterStage(target, record.getCurrentStage())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Selected assignee cannot work in the " + record.getCurrentStage() + " queue");
+            }
+            assignee = target.getName();
+        }
+
+        String status = hasText(request.status()) ? normalizeQueueStatus(request.status())
+                : (assignee.isBlank() ? "WAITING" : "IN_PROGRESS");
+        String performedBy = resolveActorName(actor, request.performedBy(), "Administrator");
+        String note = hasText(request.note()) ? request.note().trim()
+                : (assignee.isBlank() ? "Queue assignment cleared" : "Assigned to " + assignee);
+        record.setAssignedTo(assignee);
+        record.setQueueStatus(status);
+        record.setUpdatedAt(LocalDateTime.now().toString());
+        record.setStageHistory(appendHistory(record.getStageHistory(), LocalDateTime.now() + "|"
+                + record.getCurrentStage() + "|" + performedBy + "|" + note));
+        dataStore.updateEncounterRecord(record);
+
+        writeAuditLog(performedBy, "encounter_assignment", note + " for " + record.getEncounterId(), "127.0.0.1");
+        Map<String, Object> response = toEncounterResponse(record);
+        wsService.broadcastQueueUpdate(record.getCurrentStage(), response);
         return Map.of("success", true, "entry", response);
     }
 
@@ -2168,13 +2373,18 @@ public class ApiController {
 
         record.setCheckedOut(true);
         record.setCurrentStage("CHECKOUT");
+        record.setQueueStatus("CLOSED");
+        record.setAssignedTo("");
+        record.setVisitOutcome("COMPLETED");
         record.setCheckoutTime(LocalDateTime.now().toString());
-        record.setUpdatedAt(LocalDateTime.now().toString());
+        record.setEndedAt(record.getCheckoutTime());
+        record.setEndedBy(performedBy);
+        record.setUpdatedAt(record.getCheckoutTime());
         record.setStageHistory(appendHistory(record.getStageHistory(), LocalDateTime.now() + "|CHECKOUT|" + performedBy + "|" + note));
         dataStore.updateEncounterRecord(record);
         writeAuditLog(performedBy, "checkout", "Checked out encounter " + record.getEncounterId(), "127.0.0.1");
         Map<String, Object> response = toEncounterResponse(record);
-        wsService.broadcastQueueUpdate(response);
+        wsService.broadcastQueueUpdate(record.getCurrentStage(), response);
         return Map.of("success", true, "entry", response);
     }
 
@@ -2784,6 +2994,13 @@ public class ApiController {
         response.put("assigned_to", stringValue(record.getAssignedTo()));
         response.put("department_entered_at", hasText(record.getDepartmentEnteredAt())
                 ? record.getDepartmentEnteredAt() : record.getUpdatedAt());
+        response.put("wait_minutes", departmentWaitMinutes(record));
+        response.put("sla_minutes", EncounterWorkflow.slaMinutesForStage(record.getCurrentStage()));
+        response.put("overdue", isQueueOverdue(record));
+        response.put("visit_outcome", hasText(record.getVisitOutcome()) ? record.getVisitOutcome()
+                : (record.isCheckedOut() ? "COMPLETED" : "ACTIVE"));
+        response.put("ended_at", stringValue(record.getEndedAt()));
+        response.put("ended_by", stringValue(record.getEndedBy()));
         response.put("pending_actions", csvToList(record.getPendingActions()));
         response.put("completed_actions", csvToList(record.getCompletedActions()));
         response.put("notes", stringValue(record.getNotes()));
@@ -3295,6 +3512,14 @@ public class ApiController {
                     Map<String, Object> entry = new LinkedHashMap<>();
                     entry.put("stage", stage);
                     entry.put("count", encounters.stream().filter(encounter -> stage.equalsIgnoreCase(encounter.getCurrentStage())).count());
+                    Map<String, Object> queue = buildQueueStageSummary(stage, encounters);
+                    entry.put("waiting", queue.get("waiting"));
+                    entry.put("inProgress", queue.get("in_progress"));
+                    entry.put("onHold", queue.get("on_hold"));
+                    entry.put("overdue", queue.get("overdue"));
+                    entry.put("averageWaitMinutes", queue.get("average_wait_minutes"));
+                    entry.put("maximumWaitMinutes", queue.get("maximum_wait_minutes"));
+                    entry.put("slaMinutes", queue.get("sla_minutes"));
                     return entry;
                 })
                 .toList();
@@ -3563,6 +3788,44 @@ public class ApiController {
         return hasText(record.getQueueStatus()) ? record.getQueueStatus() : "WAITING";
     }
 
+    private long departmentWaitMinutes(EncounterRecord record) {
+        String enteredAt = hasText(record.getDepartmentEnteredAt()) ? record.getDepartmentEnteredAt()
+                : firstNonBlank(record.getUpdatedAt(), record.getCreatedAt()).toString();
+        try {
+            LocalDateTime start = LocalDateTime.parse(enteredAt);
+            LocalDateTime end = record.isCheckedOut() && hasText(record.getEndedAt())
+                    ? LocalDateTime.parse(record.getEndedAt()) : LocalDateTime.now();
+            return Math.max(0, Duration.between(start, end).toMinutes());
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
+    private boolean isQueueOverdue(EncounterRecord record) {
+        if (record == null || record.isCheckedOut() || isEqualIgnoreCase(defaultQueueStatus(record), "IN_PROGRESS")) {
+            return false;
+        }
+        return departmentWaitMinutes(record) >= EncounterWorkflow.slaMinutesForStage(record.getCurrentStage());
+    }
+
+    private Map<String, Object> buildQueueStageSummary(String stage, List<EncounterRecord> encounters) {
+        List<EncounterRecord> queue = encounters.stream()
+                .filter(record -> !record.isCheckedOut() && isEqualIgnoreCase(record.getCurrentStage(), stage))
+                .toList();
+        long totalWait = queue.stream().mapToLong(this::departmentWaitMinutes).sum();
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("stage", stage);
+        summary.put("total", queue.size());
+        summary.put("waiting", queue.stream().filter(record -> isEqualIgnoreCase(defaultQueueStatus(record), "WAITING")).count());
+        summary.put("in_progress", queue.stream().filter(record -> isEqualIgnoreCase(defaultQueueStatus(record), "IN_PROGRESS")).count());
+        summary.put("on_hold", queue.stream().filter(record -> isEqualIgnoreCase(defaultQueueStatus(record), "ON_HOLD")).count());
+        summary.put("overdue", queue.stream().filter(this::isQueueOverdue).count());
+        summary.put("average_wait_minutes", queue.isEmpty() ? 0 : Math.round((double) totalWait / queue.size()));
+        summary.put("maximum_wait_minutes", queue.stream().mapToLong(this::departmentWaitMinutes).max().orElse(0));
+        summary.put("sla_minutes", EncounterWorkflow.slaMinutesForStage(stage));
+        return summary;
+    }
+
     private String queueStatusNote(String status) {
         return switch (status) {
             case "IN_PROGRESS" -> "Service started";
@@ -3589,6 +3852,92 @@ public class ApiController {
 
         record.setPendingActions(String.join(", ", pending));
         record.setCompletedActions(String.join(", ", completed));
+    }
+
+    private EncounterRecord findActiveEncounterForPatient(String patientId) {
+        String canonicalPatientId = resolveCanonicalPatientId(patientId);
+        return dataStore.getEncounterRecords().stream()
+                .filter(Objects::nonNull)
+                .filter(record -> !record.isCheckedOut())
+                .filter(record -> isEqualIgnoreCase(record.getPatientId(), canonicalPatientId)
+                        || isEqualIgnoreCase(record.getPatientId(), patientId))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private boolean allCurrentLabTestsApproved(String patientId) {
+        EncounterRecord encounter = findActiveEncounterForPatient(patientId);
+        if (encounter == null) return false;
+        LocalDate encounterDate;
+        try {
+            encounterDate = LocalDateTime.parse(encounter.getCreatedAt()).toLocalDate();
+        } catch (Exception ignored) {
+            encounterDate = LocalDate.now();
+        }
+        LocalDate visitDate = encounterDate;
+        List<LabTest> visitTests = dataStore.getLabTests().stream()
+                .filter(test -> isEqualIgnoreCase(test.getPatientId(), patientId))
+                .filter(test -> {
+                    try {
+                        return !LocalDate.parse(test.getDate()).isBefore(visitDate);
+                    } catch (Exception ignored) {
+                        return true;
+                    }
+                })
+                .toList();
+        return !visitTests.isEmpty() && visitTests.stream().allMatch(test ->
+                isEqualIgnoreCase(test.getStatus(), "completed") && hasText(test.getApprovedBy()));
+    }
+
+    private void updateActiveEncounterPayment(String patientId, String status, String note) {
+        EncounterRecord encounter = findActiveEncounterForPatient(patientId);
+        if (encounter == null) return;
+        encounter.setPaymentStatus(status);
+        if ("PENDING".equalsIgnoreCase(status)) {
+            encounter.setCheckoutEligible(false);
+        }
+        encounter.setUpdatedAt(LocalDateTime.now().toString());
+        encounter.setStageHistory(appendHistory(encounter.getStageHistory(), LocalDateTime.now() + "|"
+                + encounter.getCurrentStage() + "|System|" + note));
+        dataStore.updateEncounterRecord(encounter);
+        wsService.broadcastQueueUpdate(encounter.getCurrentStage(), toEncounterResponse(encounter));
+    }
+
+    private void routeAfterPharmacyDispense(String patientId, String performedBy) {
+        boolean paymentPending = dataStore.getBillingInvoices().stream()
+                .filter(invoice -> isEqualIgnoreCase(invoice.getPatientId(), patientId))
+                .anyMatch(invoice -> isEqualIgnoreCase(invoice.getStatus(), "pending"));
+        updateActiveEncounterPayment(patientId, paymentPending ? "PENDING" : "NOT_REQUIRED",
+                paymentPending ? "Medication dispensed; payment remains pending" : "Medication dispensed; no payment required");
+        routeActiveEncounter(patientId, "PHARMACY", paymentPending ? "ACCOUNTS" : "CHECKOUT", performedBy,
+                paymentPending ? "Medication dispensed; sent for payment" : "Medication dispensed; sent to checkout");
+    }
+
+    private void routeActiveEncounter(String patientId, String expectedStage, String targetStage,
+                                      String performedBy, String note) {
+        EncounterRecord encounter = findActiveEncounterForPatient(patientId);
+        if (encounter == null || !isEqualIgnoreCase(encounter.getCurrentStage(), expectedStage)
+                || !EncounterWorkflow.canTransition(expectedStage, targetStage)) {
+            return;
+        }
+        String previousStage = normalizeStage(encounter.getCurrentStage());
+        String destination = normalizeStage(targetStage);
+        applyStageTaskTransition(encounter, previousStage, destination);
+        encounter.setCurrentStage(destination);
+        encounter.setQueueStatus("WAITING");
+        encounter.setAssignedTo("");
+        encounter.setDepartmentEnteredAt(LocalDateTime.now().toString());
+        encounter.setUpdatedAt(encounter.getDepartmentEnteredAt());
+        encounter.setStageHistory(appendHistory(encounter.getStageHistory(), LocalDateTime.now() + "|"
+                + destination + "|" + performedBy + "|" + note));
+        if (EncounterWorkflow.CHECKOUT.equals(destination)) {
+            encounter.setCheckoutEligible(!hasOutstandingActions(encounter.getPendingActions())
+                    && !"PENDING".equalsIgnoreCase(encounter.getPaymentStatus()));
+        }
+        dataStore.updateEncounterRecord(encounter);
+        writeAuditLog(performedBy, "automatic_handoff", "Moved encounter " + encounter.getEncounterId()
+                + " from " + previousStage + " to " + destination, "127.0.0.1");
+        wsService.broadcastQueueUpdate(previousStage, destination, toEncounterResponse(encounter));
     }
 
     private Map<String, Object> parsePayloadJson(ClinicalFormRecord form) {
@@ -4106,12 +4455,26 @@ public class ApiController {
     }
 
     private void requireEncounterStageAccess(AppUser user, String stageValue) {
-        if (isEqualIgnoreCase(user.getRole(), "Admin")) {
-            return;
-        }
         String stage = normalizeStage(stageValue);
+        if (!canAccessEncounterStage(user, stage)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "You do not have permission to manage the " + stage + " queue");
+        }
+    }
+
+    private boolean canAccessEncounterStage(AppUser user, String stageValue) {
+        if (isEqualIgnoreCase(user.getRole(), "Admin")) {
+            return true;
+        }
+        String stage;
+        try {
+            stage = normalizeStage(stageValue);
+        } catch (ResponseStatusException exception) {
+            return false;
+        }
         List<String> required = switch (stage) {
-            case "RECEPTION", "CONSULTATION" -> List.of("walkin.view");
+            case "RECEPTION" -> List.of("walkin.view");
+            case "CONSULTATION" -> List.of("forms.view");
             case "TRIAGE" -> List.of("triage.view");
             case "EMERGENCY" -> List.of("emergency.view");
             case "LABORATORY" -> List.of("laboratory.view");
@@ -4129,10 +4492,7 @@ public class ApiController {
             case "CHECKOUT" -> List.of("records.view", "walkin.view", "billing.view");
             default -> List.of();
         };
-        if (required.stream().noneMatch(permission -> userHasPermission(user, permission))) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                    "You do not have permission to manage the " + stage + " queue");
-        }
+        return required.stream().anyMatch(permission -> userHasPermission(user, permission));
     }
 
     private boolean userHasPermission(AppUser user, String permission) {
@@ -4739,7 +5099,7 @@ public class ApiController {
 
     @GetMapping("/pharmacy/dispensing-queue")
     public List<Map<String, Object>> getDispensingQueue(HttpServletRequest req) {
-        requireAnyPermission(req, List.of("pharmacy.view", "pharmacy.dispense"));
+        AppUser actor = requireAnyPermission(req, List.of("pharmacy.view", "pharmacy.dispense"));
         return dataStore.getPrescriptions().stream()
             .filter(p -> "pending".equalsIgnoreCase(stringValue(p.getStatus())))
             .map(this::toPrescriptionResponse)
@@ -4792,14 +5152,21 @@ public class ApiController {
     public Map<String, Object> dispenseFromQueue(HttpServletRequest req,
                                                   @PathVariable String rxId,
                                                   @RequestBody Map<String, Object> body) {
-        requireAnyPermission(req, List.of("pharmacy.view", "pharmacy.dispense"));
+        AppUser actor = requireAnyPermission(req, List.of("pharmacy.view", "pharmacy.dispense"));
         com.unza.clinic.model.Prescription prescription = dataStore.getPrescriptions().stream()
             .filter(p -> rxId.equalsIgnoreCase(stringValue(p.getRxId())))
             .findFirst()
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Prescription not found"));
 
+        // Reuse the stock-checked dispensing path so this richer pharmacy
+        // screen cannot bypass inventory deductions.
+        if (!isEqualIgnoreCase(prescription.getStatus(), "dispensed")) {
+            dispensePrescription(req, prescription.getId());
+            prescription = dataStore.getPrescription(prescription.getId());
+        }
+
         prescription.setStatus("dispensed");
-        prescription.setDispensedBy(strOf(body, "pharmacist_name"));
+        prescription.setDispensedBy(resolveActorName(actor, strOf(body, "pharmacist_name"), "Pharmacist"));
         prescription.setDispensedAt(LocalDateTime.now());
         prescription.setPharmacistNotes(strOf(body, "pharmacist_notes"));
         dataStore.updatePrescription(prescription);
@@ -4823,7 +5190,8 @@ public class ApiController {
             } catch (Exception ignored) {}
         }
 
-        writeAuditLog("System", "Pharmacist", "dispense", "Dispensed Rx " + rxId, "127.0.0.1");
+        writeAuditLog(actor.getName(), actor.getRole(), "dispense", "Dispensed Rx " + rxId, "127.0.0.1");
+        routeAfterPharmacyDispense(prescription.getPatientId(), actor.getName());
         return Map.of("success", true, "entry", toPrescriptionResponse(prescription));
     }
 
