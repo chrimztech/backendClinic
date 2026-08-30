@@ -224,7 +224,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return new String[] { "reports.view" };
         }
         if (path.startsWith("/api/encounters")) {
-            return new String[] { "walkin.view", "triage.view", "records.view", "forms.view", "prescriptions.view", "laboratory.view", "radiology.view", "pharmacy.view", "admissions.view", "billing.view" };
+            return new String[] {
+                    "walkin.view", "triage.view", "emergency.view", "records.view", "forms.view",
+                    "prescriptions.view", "laboratory.view", "radiology.view", "pharmacy.view",
+                    "pharmacy.dispense", "admissions.view", "wards.view", "billing.view",
+                    "counseling.view", "mch.view", "art.view", "dental.view", "eye.view",
+                    "sti.view", "physio.view"
+            };
         }
         if (path.startsWith("/api/clinical-forms")) {
             return new String[] { "forms.view" };

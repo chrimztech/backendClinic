@@ -7,6 +7,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 
 @Entity
 @Table(name = "encounter_records")
@@ -14,6 +15,8 @@ public class EncounterRecord {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+    @Version
+    private Long version;
     private String encounterId;
     private String patientId;
     private String patientName;
@@ -26,6 +29,14 @@ public class EncounterRecord {
     private String updatedAt;
     private String createdBy;
     private String checkoutTime;
+    @Column(name = "queue_status", length = 20)
+    private String queueStatus;
+    @Column(length = 20)
+    private String priority;
+    @Column(name = "assigned_to", length = 120)
+    private String assignedTo;
+    @Column(name = "department_entered_at", length = 50)
+    private String departmentEnteredAt;
     @Lob
     @Column(length = 8000)
     private String stageHistory;
@@ -43,6 +54,8 @@ public class EncounterRecord {
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
+    public Long getVersion() { return version; }
+    public void setVersion(Long version) { this.version = version; }
     public String getEncounterId() { return encounterId; }
     public void setEncounterId(String encounterId) { this.encounterId = encounterId; }
     public String getPatientId() { return patientId; }
@@ -67,6 +80,14 @@ public class EncounterRecord {
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public String getCheckoutTime() { return checkoutTime; }
     public void setCheckoutTime(String checkoutTime) { this.checkoutTime = checkoutTime; }
+    public String getQueueStatus() { return queueStatus; }
+    public void setQueueStatus(String queueStatus) { this.queueStatus = queueStatus; }
+    public String getPriority() { return priority; }
+    public void setPriority(String priority) { this.priority = priority; }
+    public String getAssignedTo() { return assignedTo; }
+    public void setAssignedTo(String assignedTo) { this.assignedTo = assignedTo; }
+    public String getDepartmentEnteredAt() { return departmentEnteredAt; }
+    public void setDepartmentEnteredAt(String departmentEnteredAt) { this.departmentEnteredAt = departmentEnteredAt; }
     public String getStageHistory() { return stageHistory; }
     public void setStageHistory(String stageHistory) { this.stageHistory = stageHistory; }
     public String getPendingActions() { return pendingActions; }

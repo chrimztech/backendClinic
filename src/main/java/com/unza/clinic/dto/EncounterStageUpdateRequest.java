@@ -8,6 +8,7 @@ public record EncounterStageUpdateRequest(
         String pendingActions,
         String completedActions,
         String paymentStatus,
-        Boolean checkoutEligible
+        Boolean checkoutEligible,
+        String priority
 ) {
 }

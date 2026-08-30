@@ -7,6 +7,7 @@ import com.unza.clinic.dto.*;
 import com.unza.clinic.model.LoginAuditLog;
 import com.unza.clinic.service.ClinicDataStore;
 import com.unza.clinic.service.DataBackupService;
+import com.unza.clinic.service.EncounterWorkflow;
 import com.unza.clinic.service.HrDirectoryService;
 import com.unza.clinic.service.LoginRateLimiter;
 import com.unza.clinic.service.RefreshTokenService;
@@ -43,6 +44,14 @@ import java.util.stream.IntStream;
 @RestController
 @RequestMapping("/api")
 public class ApiController {
+
+     private static final List<String> ENCOUNTER_ACCESS_PERMISSIONS = List.of(
+             "walkin.view", "triage.view", "emergency.view", "records.view", "forms.view",
+             "prescriptions.view", "laboratory.view", "radiology.view", "pharmacy.view",
+             "pharmacy.dispense", "admissions.view", "wards.view", "billing.view",
+             "counseling.view", "mch.view", "art.view", "dental.view", "eye.view",
+             "sti.view", "physio.view"
+     );
 
      private final ClinicDataStore dataStore;
      private final DataBackupService backupService;
@@ -1986,14 +1995,14 @@ public class ApiController {
     public Object getEncounters(HttpServletRequest httpRequest,
                                 @RequestParam(required = false) Integer page,
                                 @RequestParam(required = false) Integer size) {
-        requirePermission(httpRequest, "walkin.view");
+        requireAnyPermission(httpRequest, ENCOUNTER_ACCESS_PERMISSIONS);
         List<Map<String, Object>> all = dataStore.getEncounterRecords().stream().map(this::toEncounterResponse).toList();
         return paginate(all, page, size);
     }
 
     @PostMapping("/encounters")
     public Map<String, Object> createEncounter(HttpServletRequest httpRequest, @Valid @RequestBody EncounterCreateRequest request) {
-        requirePermission(httpRequest, "walkin.view");
+        AppUser actor = requirePermission(httpRequest, "walkin.view");
         Patient patient = resolvePatient(request.patientId());
         if (patient == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Patient must be registered before opening an encounter");
@@ -2009,52 +2018,136 @@ public class ApiController {
         record.setPatientId(canonicalPatientId);
         record.setPatientName(resolveCanonicalPatientName(patient, request.patientName()));
         record.setPatientType(hasText(request.patientType()) ? request.patientType().trim() : "GENERAL");
-        record.setCurrentStage(hasText(request.currentStage()) ? normalizeStage(request.currentStage()) : "RECEPTION");
+        // Every visit enters through reception. Reception then explicitly routes it.
+        record.setCurrentStage(EncounterWorkflow.RECEPTION);
         record.setPaymentStatus("NOT_REQUIRED");
         record.setCheckoutEligible(false);
         record.setCheckedOut(false);
         record.setCreatedAt(LocalDateTime.now().toString());
         record.setUpdatedAt(LocalDateTime.now().toString());
-        record.setCreatedBy(hasText(request.createdBy()) ? request.createdBy().trim() : "Reception");
+        record.setCreatedBy(resolveActorName(actor, request.createdBy(), "Reception"));
         record.setCheckoutTime("");
+        record.setQueueStatus("WAITING");
+        record.setPriority("ROUTINE");
+        record.setAssignedTo("");
+        record.setDepartmentEnteredAt(record.getCreatedAt());
         record.setStageHistory(LocalDateTime.now() + "|" + record.getCurrentStage() + "|" + record.getCreatedBy() + "|Encounter opened");
-        record.setPendingActions(stringValue(request.pendingActions()));
+        record.setPendingActions(String.join(", ", EncounterWorkflow.tasksForStage(record.getCurrentStage())));
         record.setCompletedActions("Registration");
         record.setNotes(stringValue(request.notes()));
         record = dataStore.addEncounterRecord(record);
         writeAuditLog(record.getCreatedBy(), "create", "Opened encounter " + record.getEncounterId() + " for " + record.getPatientName(), "127.0.0.1");
-        return Map.of("success", true, "encounter_id", record.getEncounterId(), "entry", toEncounterResponse(record));
+        Map<String, Object> response = toEncounterResponse(record);
+        wsService.broadcastQueueUpdate(response);
+        return Map.of("success", true, "encounter_id", record.getEncounterId(), "entry", response);
     }
 
     @PutMapping("/encounters/{id}/stage")
     public Map<String, Object> updateEncounterStage(HttpServletRequest httpRequest, @PathVariable Long id, @RequestBody EncounterStageUpdateRequest request) {
-        requirePermission(httpRequest, "walkin.view");
+        AppUser actor = requireAnyPermission(httpRequest, ENCOUNTER_ACCESS_PERMISSIONS);
         EncounterRecord record = dataStore.getEncounterRecord(id);
         if (record == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Encounter not found");
         }
+        if (record.isCheckedOut()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Checked-out encounters cannot be routed");
+        }
+        requireEncounterStageAccess(actor, record.getCurrentStage());
 
-        String stage = hasText(request.stage()) ? normalizeStage(request.stage()) : record.getCurrentStage();
-        String performedBy = hasText(request.performedBy()) ? request.performedBy().trim() : "Clinic User";
+        String currentStage = normalizeStage(record.getCurrentStage());
+        String stage = hasText(request.stage()) ? normalizeStage(request.stage()) : currentStage;
+        String performedBy = resolveActorName(actor, request.performedBy(), "Clinic User");
         String note = hasText(request.note()) ? request.note().trim() : "Stage updated";
 
+        if ((isEqualIgnoreCase(defaultQueueStatus(record), "IN_PROGRESS") || isEqualIgnoreCase(defaultQueueStatus(record), "ON_HOLD"))
+                && hasText(record.getAssignedTo())
+                && !isEqualIgnoreCase(record.getAssignedTo(), performedBy)
+                && !isEqualIgnoreCase(actor.getRole(), "Admin")) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "This patient is already being served by " + record.getAssignedTo());
+        }
+
+        if (!EncounterWorkflow.canTransition(currentStage, stage)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Invalid stage transition from " + currentStage + " to " + stage);
+        }
+
+        boolean stageChanged = !stage.equals(currentStage);
+        if (stageChanged) {
+            applyStageTaskTransition(record, currentStage, stage);
+            record.setQueueStatus("WAITING");
+            record.setAssignedTo("");
+            record.setDepartmentEnteredAt(LocalDateTime.now().toString());
+        }
         record.setCurrentStage(stage);
         record.setUpdatedAt(LocalDateTime.now().toString());
         record.setStageHistory(appendHistory(record.getStageHistory(), LocalDateTime.now() + "|" + stage + "|" + performedBy + "|" + note));
-        if (hasText(request.pendingActions())) record.setPendingActions(request.pendingActions().trim());
-        if (hasText(request.completedActions())) record.setCompletedActions(request.completedActions().trim());
-        if (hasText(request.paymentStatus())) record.setPaymentStatus(request.paymentStatus().trim().toUpperCase(Locale.ROOT));
-        if (request.checkoutEligible() != null) record.setCheckoutEligible(request.checkoutEligible());
+        if (request.pendingActions() != null) record.setPendingActions(request.pendingActions().trim());
+        if (request.completedActions() != null) record.setCompletedActions(request.completedActions().trim());
+        if (request.paymentStatus() != null) record.setPaymentStatus(request.paymentStatus().trim().toUpperCase(Locale.ROOT));
+        if (hasText(request.priority())) record.setPriority(normalizePriority(request.priority()));
+        if (request.checkoutEligible() != null) {
+            record.setCheckoutEligible(request.checkoutEligible());
+        } else if (EncounterWorkflow.CHECKOUT.equals(stage)) {
+            record.setCheckoutEligible(!hasOutstandingActions(record.getPendingActions())
+                    && !"PENDING".equalsIgnoreCase(record.getPaymentStatus()));
+        }
         if (hasText(request.note())) record.setNotes(appendHistory(record.getNotes(), note));
 
         dataStore.updateEncounterRecord(record);
         writeAuditLog(performedBy, "update", "Moved encounter " + record.getEncounterId() + " to " + stage, "127.0.0.1");
-        return Map.of("success", true, "entry", toEncounterResponse(record));
+        Map<String, Object> response = toEncounterResponse(record);
+        wsService.broadcastQueueUpdate(response);
+        return Map.of("success", true, "entry", response);
+    }
+
+    @PutMapping("/encounters/{id}/queue")
+    public Map<String, Object> updateEncounterQueue(HttpServletRequest httpRequest, @PathVariable Long id,
+                                                     @RequestBody EncounterQueueUpdateRequest request) {
+        AppUser actor = requireAnyPermission(httpRequest, ENCOUNTER_ACCESS_PERMISSIONS);
+        EncounterRecord record = dataStore.getEncounterRecord(id);
+        if (record == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Encounter not found");
+        }
+        if (record.isCheckedOut()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Checked-out encounters cannot be updated");
+        }
+        requireEncounterStageAccess(actor, record.getCurrentStage());
+
+        String status = hasText(request.status()) ? normalizeQueueStatus(request.status()) : defaultQueueStatus(record);
+        String performedBy = resolveActorName(actor, request.performedBy(), "Clinic User");
+        String note = hasText(request.note()) ? request.note().trim() : queueStatusNote(status);
+
+        if ((isEqualIgnoreCase(defaultQueueStatus(record), "IN_PROGRESS") || isEqualIgnoreCase(defaultQueueStatus(record), "ON_HOLD"))
+                && hasText(record.getAssignedTo())
+                && !isEqualIgnoreCase(record.getAssignedTo(), performedBy)
+                && !isEqualIgnoreCase(actor.getRole(), "Admin")) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "This patient is already being served by " + record.getAssignedTo());
+        }
+
+        record.setQueueStatus(status);
+        if ("WAITING".equals(status)) {
+            record.setAssignedTo("");
+        } else if ("IN_PROGRESS".equals(status) || !hasText(record.getAssignedTo())) {
+            record.setAssignedTo(performedBy);
+        }
+        if (hasText(request.priority())) record.setPriority(normalizePriority(request.priority()));
+        record.setUpdatedAt(LocalDateTime.now().toString());
+        record.setStageHistory(appendHistory(record.getStageHistory(), LocalDateTime.now() + "|"
+                + record.getCurrentStage() + "|" + performedBy + "|" + note));
+        if (hasText(request.note())) record.setNotes(appendHistory(record.getNotes(), note));
+
+        dataStore.updateEncounterRecord(record);
+        writeAuditLog(performedBy, "queue_update", "Updated encounter " + record.getEncounterId() + " to " + status, "127.0.0.1");
+        Map<String, Object> response = toEncounterResponse(record);
+        wsService.broadcastQueueUpdate(response);
+        return Map.of("success", true, "entry", response);
     }
 
     @PutMapping("/encounters/{id}/checkout")
     public Map<String, Object> checkoutEncounter(HttpServletRequest httpRequest, @PathVariable Long id, @RequestBody(required = false) EncounterCheckoutRequest request) {
-        requirePermission(httpRequest, "walkin.view");
+        AppUser actor = requireAnyPermission(httpRequest, ENCOUNTER_ACCESS_PERMISSIONS);
         EncounterRecord record = dataStore.getEncounterRecord(id);
         if (record == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Encounter not found");
@@ -2069,7 +2162,8 @@ public class ApiController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Encounter still has pending actions");
         }
 
-        String performedBy = request != null && hasText(request.performedBy()) ? request.performedBy().trim() : "Checkout Desk";
+        requireEncounterStageAccess(actor, record.getCurrentStage());
+        String performedBy = resolveActorName(actor, request != null ? request.performedBy() : null, "Checkout Desk");
         String note = request != null && hasText(request.note()) ? request.note().trim() : "Patient checked out";
 
         record.setCheckedOut(true);
@@ -2079,7 +2173,9 @@ public class ApiController {
         record.setStageHistory(appendHistory(record.getStageHistory(), LocalDateTime.now() + "|CHECKOUT|" + performedBy + "|" + note));
         dataStore.updateEncounterRecord(record);
         writeAuditLog(performedBy, "checkout", "Checked out encounter " + record.getEncounterId(), "127.0.0.1");
-        return Map.of("success", true, "entry", toEncounterResponse(record));
+        Map<String, Object> response = toEncounterResponse(record);
+        wsService.broadcastQueueUpdate(response);
+        return Map.of("success", true, "entry", response);
     }
 
      @GetMapping("/system-backup")
@@ -2683,6 +2779,11 @@ public class ApiController {
         response.put("updated_at", stringValue(record.getUpdatedAt()));
         response.put("created_by", stringValue(record.getCreatedBy()));
         response.put("checkout_time", stringValue(record.getCheckoutTime()));
+        response.put("queue_status", defaultQueueStatus(record));
+        response.put("priority", hasText(record.getPriority()) ? record.getPriority() : "ROUTINE");
+        response.put("assigned_to", stringValue(record.getAssignedTo()));
+        response.put("department_entered_at", hasText(record.getDepartmentEnteredAt())
+                ? record.getDepartmentEnteredAt() : record.getUpdatedAt());
         response.put("pending_actions", csvToList(record.getPendingActions()));
         response.put("completed_actions", csvToList(record.getCompletedActions()));
         response.put("notes", stringValue(record.getNotes()));
@@ -3108,11 +3209,17 @@ public class ApiController {
         summaries.add(buildSectionSummary("triage", "Triage", triageRecords.stream().filter(record -> !isEqualIgnoreCase(record.getStatus(), "transferred")).count(), triageRecords.stream().filter(record -> isEqualIgnoreCase(record.getLevel(), "red") || isEqualIgnoreCase(record.getLevel(), "orange")).count(), clinicalForms.stream().filter(form -> isEqualIgnoreCase(form.getDepartment(), "Triage")).count(), "Detailed vital signs, risk classification, and immediate prioritization"));
         summaries.add(buildSectionSummary("consultation", "Consultation / OPD", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "CONSULTATION")).count(), encounters.stream().filter(encounter -> !isCheckedOut(encounter) && !hasOutstandingActions(encounter.getPendingActions())).count(), clinicalForms.stream().filter(form -> isEqualIgnoreCase(form.getDepartment(), "Clinical")).count(), "Doctor assessment, diagnosis, management plan, and referrals"));
         summaries.add(buildSectionSummary("laboratory", "Laboratory", labTests.stream().filter(test -> !isEqualIgnoreCase(test.getStatus(), "completed")).count(), labTests.stream().filter(test -> isEqualIgnoreCase(test.getStatus(), "pending")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Laboratory")).count(), "Test requests, specimen logging, results entry, and lab registers"));
+        summaries.add(buildSectionSummary("radiology", "Radiology", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "RADIOLOGY")).count(), encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "RADIOLOGY") && isEqualIgnoreCase(defaultQueueStatus(encounter), "WAITING")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Radiology")).count(), "Imaging requests, examinations, reporting, and clinical handover"));
         summaries.add(buildSectionSummary("pharmacy", "Pharmacy", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "PHARMACY")).count(), drugs.stream().filter(drug -> isEqualIgnoreCase(drug.getStatus(), "critical")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Pharmacy")).count(), "Dispensing, medicine availability, and issue tracking"));
         summaries.add(buildSectionSummary("billing", "Billing & Accounts", billing.stream().filter(invoice -> !isEqualIgnoreCase(invoice.getStatus(), "completed")).count(), billing.stream().filter(invoice -> isEqualIgnoreCase(invoice.getStatus(), "pending")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Accounts") || containsIgnoreCase(form.getDepartment(), "Billing")).count(), "Fee lookup, invoices, payment clearance, and service totals"));
         summaries.add(buildSectionSummary("medical-records", "Medical Records", clinicalForms.size(), encounters.stream().filter(encounter -> encounter.isCheckedOut()).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Records")).count(), "Paper-to-digital forms, patient file continuity, and archive support"));
         summaries.add(buildSectionSummary("mch", "Maternal & Child Health", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "MCH")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getTitle(), "maternal") || containsIgnoreCase(form.getTitle(), "child")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "MCH")).count(), "Antenatal, family planning, under-five, and mother-child services"));
-        summaries.add(buildSectionSummary("eye-clinic", "Eye Clinic", clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Eye Clinic")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getTitle(), "spectacles")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Eye Clinic")).count(), "Eye assessments, outpatient records, and spectacles prescriptions"));
+        summaries.add(buildSectionSummary("art-clinic", "ART / HIV Clinic", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "ART")).count(), encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "ART") && isEqualIgnoreCase(defaultQueueStatus(encounter), "WAITING")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "ART")).count(), "Confidential HIV care, ART review, adherence, and follow-up"));
+        summaries.add(buildSectionSummary("dental-clinic", "Dental Clinic", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "DENTAL")).count(), encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "DENTAL") && isEqualIgnoreCase(defaultQueueStatus(encounter), "WAITING")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Dental")).count(), "Dental assessment, treatment, prescriptions, and follow-up"));
+        summaries.add(buildSectionSummary("eye-clinic", "Eye Clinic", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "EYE")).count(), encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "EYE") && isEqualIgnoreCase(defaultQueueStatus(encounter), "WAITING")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Eye Clinic")).count(), "Eye assessments, outpatient records, and spectacles prescriptions"));
+        summaries.add(buildSectionSummary("sti-clinic", "STI Clinic", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "STI")).count(), encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "STI") && isEqualIgnoreCase(defaultQueueStatus(encounter), "WAITING")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "STI")).count(), "Confidential STI assessment, treatment, and partner care"));
+        summaries.add(buildSectionSummary("physiotherapy", "Physiotherapy", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "PHYSIOTHERAPY")).count(), encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "PHYSIOTHERAPY") && isEqualIgnoreCase(defaultQueueStatus(encounter), "WAITING")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Physiotherapy")).count(), "Rehabilitation assessment, treatment sessions, and progress review"));
+        summaries.add(buildSectionSummary("counseling", "Counseling", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "COUNSELING")).count(), encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "COUNSELING") && isEqualIgnoreCase(defaultQueueStatus(encounter), "WAITING")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Counseling")).count(), "Confidential counseling, psychosocial support, and referral follow-up"));
         summaries.add(buildSectionSummary("inpatient", "Inpatient / Wards", admissions.stream().filter(admission -> !isEqualIgnoreCase(admission.getStatus(), "discharged")).count(), admissions.stream().filter(admission -> isEqualIgnoreCase(admission.getStatus(), "critical")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Inpatient")).count(), "Admissions, sick list certificates, in-patient drug sheets, and bed visibility"));
         summaries.add(buildSectionSummary("emergency", "Emergency", emergencyCases.stream().filter(caseItem -> !isEqualIgnoreCase(caseItem.getStatus(), "resolved")).count(), emergencyCases.stream().filter(caseItem -> isEqualIgnoreCase(caseItem.getSeverity(), "critical")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Emergency")).count(), "Immediate stabilization, urgent escalation, and emergency coordination"));
         return summaries;
@@ -3183,8 +3290,7 @@ public class ApiController {
     }
 
     private List<Map<String, Object>> buildWorkflowStageReport(List<EncounterRecord> encounters) {
-        List<String> stages = List.of("RECEPTION", "TRIAGE", "CONSULTATION", "LABORATORY", "RADIOLOGY", "PHARMACY", "ACCOUNTS", "MCH", "INPATIENT", "CHECKOUT");
-        return stages.stream()
+        return EncounterWorkflow.stages().stream()
                 .map(stage -> {
                     Map<String, Object> entry = new LinkedHashMap<>();
                     entry.put("stage", stage);
@@ -3430,7 +3536,59 @@ public class ApiController {
     }
 
     private String normalizeStage(String input) {
-        return input.trim().replace(' ', '_').toUpperCase(Locale.ROOT);
+        try {
+            return EncounterWorkflow.normalizeStage(input);
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage());
+        }
+    }
+
+    private String normalizeQueueStatus(String input) {
+        try {
+            return EncounterWorkflow.normalizeQueueStatus(input);
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage());
+        }
+    }
+
+    private String normalizePriority(String input) {
+        try {
+            return EncounterWorkflow.normalizePriority(input);
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage());
+        }
+    }
+
+    private String defaultQueueStatus(EncounterRecord record) {
+        return hasText(record.getQueueStatus()) ? record.getQueueStatus() : "WAITING";
+    }
+
+    private String queueStatusNote(String status) {
+        return switch (status) {
+            case "IN_PROGRESS" -> "Service started";
+            case "ON_HOLD" -> "Patient placed on hold";
+            default -> "Returned to waiting queue";
+        };
+    }
+
+    private void applyStageTaskTransition(EncounterRecord record, String currentStage, String targetStage) {
+        List<String> pending = new ArrayList<>(csvToList(record.getPendingActions()));
+        List<String> completed = new ArrayList<>(csvToList(record.getCompletedActions()));
+
+        for (String task : EncounterWorkflow.tasksForStage(currentStage)) {
+            pending.removeIf(item -> item.equalsIgnoreCase(task));
+            if (completed.stream().noneMatch(item -> item.equalsIgnoreCase(task))) {
+                completed.add(task);
+            }
+        }
+        for (String task : EncounterWorkflow.tasksForStage(targetStage)) {
+            if (pending.stream().noneMatch(item -> item.equalsIgnoreCase(task))) {
+                pending.add(task);
+            }
+        }
+
+        record.setPendingActions(String.join(", ", pending));
+        record.setCompletedActions(String.join(", ", completed));
     }
 
     private Map<String, Object> parsePayloadJson(ClinicalFormRecord form) {
@@ -3945,6 +4103,36 @@ public class ApiController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "You do not have permission to perform this action");
         }
         return user;
+    }
+
+    private void requireEncounterStageAccess(AppUser user, String stageValue) {
+        if (isEqualIgnoreCase(user.getRole(), "Admin")) {
+            return;
+        }
+        String stage = normalizeStage(stageValue);
+        List<String> required = switch (stage) {
+            case "RECEPTION", "CONSULTATION" -> List.of("walkin.view");
+            case "TRIAGE" -> List.of("triage.view");
+            case "EMERGENCY" -> List.of("emergency.view");
+            case "LABORATORY" -> List.of("laboratory.view");
+            case "RADIOLOGY" -> List.of("radiology.view");
+            case "PHARMACY" -> List.of("pharmacy.view", "pharmacy.dispense");
+            case "ACCOUNTS" -> List.of("billing.view", "billing.payments");
+            case "MCH" -> List.of("mch.view");
+            case "ART" -> List.of("art.view");
+            case "DENTAL" -> List.of("dental.view");
+            case "EYE" -> List.of("eye.view");
+            case "STI" -> List.of("sti.view");
+            case "PHYSIOTHERAPY" -> List.of("physio.view");
+            case "COUNSELING" -> List.of("counseling.view");
+            case "INPATIENT" -> List.of("admissions.view", "wards.view");
+            case "CHECKOUT" -> List.of("records.view", "walkin.view", "billing.view");
+            default -> List.of();
+        };
+        if (required.stream().noneMatch(permission -> userHasPermission(user, permission))) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "You do not have permission to manage the " + stage + " queue");
+        }
     }
 
     private boolean userHasPermission(AppUser user, String permission) {
