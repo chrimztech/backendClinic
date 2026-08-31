@@ -75,6 +75,39 @@ class WebSocketAuthChannelInterceptorTests {
         assertThrows(MessagingException.class, () -> interceptor.preSend(laboratory, channel));
     }
 
+    @Test
+    void alternativeDepartmentPermissionCanSubscribe() {
+        AuthUserDetails principal = new AuthUserDetails(2L, "USR-2", "Pharmacist", "p@example.test",
+                "Pharmacist", "Pharmacy", null, null, "active", false, List.of("pharmacy.dispense"));
+        UsernamePasswordAuthenticationToken authentication =
+                new UsernamePasswordAuthenticationToken(principal, null, List.of());
+
+        Message<byte[]> pharmacy = stompMessage(StompCommand.SUBSCRIBE, "/topic/queue/PHARMACY", null, authentication);
+        interceptor.preSend(pharmacy, channel);
+    }
+
+    @Test
+    void adminCanSubscribeToDepartmentQueueWithCustomPermissions() {
+        AuthUserDetails principal = new AuthUserDetails(3L, "USR-3", "Admin", "a@example.test",
+                "Admin", "Administration", null, null, "active", false, List.of("dashboard.view"));
+        UsernamePasswordAuthenticationToken authentication =
+                new UsernamePasswordAuthenticationToken(principal, null, List.of());
+
+        Message<byte[]> laboratory = stompMessage(StompCommand.SUBSCRIBE, "/topic/queue/LABORATORY", null, authentication);
+        interceptor.preSend(laboratory, channel);
+    }
+
+    @Test
+    void unknownQueueIsDeniedEvenForAdmin() {
+        AuthUserDetails principal = new AuthUserDetails(3L, "USR-3", "Admin", "a@example.test",
+                "Admin", "Administration", null, null, "active", false, List.of("dashboard.view"));
+        UsernamePasswordAuthenticationToken authentication =
+                new UsernamePasswordAuthenticationToken(principal, null, List.of());
+
+        Message<byte[]> unknown = stompMessage(StompCommand.SUBSCRIBE, "/topic/queue/UNKNOWN", null, authentication);
+        assertThrows(MessagingException.class, () -> interceptor.preSend(unknown, channel));
+    }
+
     private Message<byte[]> stompMessage(StompCommand command, String destination, String authorization,
                                           UsernamePasswordAuthenticationToken authentication) {
         StompHeaderAccessor accessor = StompHeaderAccessor.create(command);

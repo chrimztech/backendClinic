@@ -479,6 +479,7 @@ public class EnhancedFeaturesController {
     // GET /api/export/lab-results.xlsx
     // GET /api/export/billing/{invoiceId}.pdf
     // GET /api/export/patients/{patientId}/summary.pdf
+    // GET /api/export/referrals/{referralId}.pdf
     // ================================================================
 
     @GetMapping("/export/patients.xlsx")
@@ -541,6 +542,23 @@ public class EnhancedFeaturesController {
                 .toList();
         byte[] data = exportService.exportPatientSummaryPdf(patient, tests, invoices);
         return pdfResponse(data, "patient-summary-" + patientId + ".pdf");
+    }
+
+    @GetMapping("/export/referrals/{referralId}.pdf")
+    public ResponseEntity<byte[]> exportReferralPdf(HttpServletRequest request,
+                                                      @PathVariable String referralId) throws Exception {
+        requireAnyPermission(request, List.of("referrals.view"));
+        ReferralRecord referral = dataStore.getReferralRecords().stream()
+                .filter(item -> referralId.equalsIgnoreCase(item.getReferralId()))
+                .findFirst()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Referral not found"));
+        Patient patient = patientRepo.findAll().stream()
+                .filter(item -> referral.getPatientId().equalsIgnoreCase(item.getPatientId())
+                        || referral.getPatientId().equalsIgnoreCase(item.getClinicNumber()))
+                .findFirst()
+                .orElse(null);
+        byte[] data = exportService.exportReferralPdf(referral, patient);
+        return pdfResponse(data, "referral-" + referral.getReferralId() + ".pdf");
     }
 
     // ================================================================

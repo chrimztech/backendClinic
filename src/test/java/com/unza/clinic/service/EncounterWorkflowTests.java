@@ -2,6 +2,8 @@ package com.unza.clinic.service;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -36,6 +38,10 @@ class EncounterWorkflowTests {
     void queuesHaveDepartmentPermissionsAndResponseTargets() {
         assertEquals("walkin.view", EncounterWorkflow.permissionForStage("RECEPTION"));
         assertEquals("laboratory.view", EncounterWorkflow.permissionForStage("LABORATORY"));
+        assertEquals(List.of("pharmacy.view", "pharmacy.dispense"),
+                EncounterWorkflow.permissionsForStage("PHARMACY"));
+        assertEquals(List.of("records.view", "walkin.view", "billing.view"),
+                EncounterWorkflow.permissionsForStage("CHECKOUT"));
         assertEquals(5, EncounterWorkflow.slaMinutesForStage("EMERGENCY"));
         assertEquals(30, EncounterWorkflow.slaMinutesForStage("CONSULTATION"));
     }

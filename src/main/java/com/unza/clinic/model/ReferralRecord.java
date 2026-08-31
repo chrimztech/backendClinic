@@ -4,6 +4,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Column;
 import jakarta.persistence.Table;
 
 @Entity
@@ -22,6 +23,17 @@ public class ReferralRecord {
     private String urgency;
     private String date;
     private String status;
+    private String destinationFacility;
+    private String provisionalDiagnosis;
+    @Column(columnDefinition = "TEXT")
+    private String clinicalSummary;
+    @Column(columnDefinition = "TEXT")
+    private String investigations;
+    @Column(columnDefinition = "TEXT")
+    private String treatmentGiven;
+    private String vitalSigns;
+    private String referringClinicianContact;
+    @Column(columnDefinition = "TEXT")
     private String notes;
 
     public ReferralRecord() {}
@@ -48,6 +60,20 @@ public class ReferralRecord {
     public void setDate(String date) { this.date = date; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getDestinationFacility() { return destinationFacility; }
+    public void setDestinationFacility(String destinationFacility) { this.destinationFacility = destinationFacility; }
+    public String getProvisionalDiagnosis() { return provisionalDiagnosis; }
+    public void setProvisionalDiagnosis(String provisionalDiagnosis) { this.provisionalDiagnosis = provisionalDiagnosis; }
+    public String getClinicalSummary() { return clinicalSummary; }
+    public void setClinicalSummary(String clinicalSummary) { this.clinicalSummary = clinicalSummary; }
+    public String getInvestigations() { return investigations; }
+    public void setInvestigations(String investigations) { this.investigations = investigations; }
+    public String getTreatmentGiven() { return treatmentGiven; }
+    public void setTreatmentGiven(String treatmentGiven) { this.treatmentGiven = treatmentGiven; }
+    public String getVitalSigns() { return vitalSigns; }
+    public void setVitalSigns(String vitalSigns) { this.vitalSigns = vitalSigns; }
+    public String getReferringClinicianContact() { return referringClinicianContact; }
+    public void setReferringClinicianContact(String referringClinicianContact) { this.referringClinicianContact = referringClinicianContact; }
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
 }

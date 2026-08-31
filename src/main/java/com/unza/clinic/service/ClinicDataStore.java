@@ -133,6 +133,7 @@ public class ClinicDataStore {
     public List<Department> getDepartments() { return departmentRepo.findAll(); }
     public Department addDepartment(Department dept) { return departmentRepo.save(dept); }
     public Department updateDepartment(Department dept) { return departmentRepo.save(dept); }
+    public void deleteDepartment(Department dept) { departmentRepo.delete(dept); }
     public Department getDepartmentByCode(String code) {
         return departmentRepo.findAll().stream()
                 .filter(department -> code != null && code.equalsIgnoreCase(department.getCode()))
@@ -214,6 +215,7 @@ public class ClinicDataStore {
     }
     public List<ServiceTariff> getServiceTariffs() { return serviceTariffRepo.findAll(); }
     public ServiceTariff addServiceTariff(ServiceTariff tariff) { return serviceTariffRepo.save(tariff); }
+    public void deleteServiceTariff(ServiceTariff tariff) { serviceTariffRepo.delete(tariff); }
     public ServiceTariff getServiceTariffByCode(String tariffCode) {
         return serviceTariffRepo.findAll().stream()
                 .filter(tariff -> tariffCode != null && tariffCode.equalsIgnoreCase(tariff.getTariffCode()))
@@ -223,13 +225,20 @@ public class ClinicDataStore {
 
     public List<InventoryRecord> getInventoryRecords() { return inventoryRepo.findAll(); }
     public InventoryRecord addInventoryRecord(InventoryRecord rec) { return inventoryRepo.save(rec); }
+    public InventoryRecord updateInventoryRecord(InventoryRecord rec) { return inventoryRepo.save(rec); }
+    public void deleteInventoryRecord(InventoryRecord rec) { inventoryRepo.delete(rec); }
+    public InventoryRecord getInventoryRecord(Long id) { return inventoryRepo.findById(id).orElse(null); }
 
     public List<Supplier> getSuppliers() { return supplierRepo.findAll(); }
     public Supplier addSupplier(Supplier sup) { return supplierRepo.save(sup); }
+    public Supplier updateSupplier(Supplier sup) { return supplierRepo.save(sup); }
+    public void deleteSupplier(Supplier sup) { supplierRepo.delete(sup); }
+    public Supplier getSupplier(Long id) { return supplierRepo.findById(id).orElse(null); }
 
     public List<Drug> getDrugs() { return drugRepo.findAll(); }
     public Drug addDrug(Drug drug) { return drugRepo.save(drug); }
     public Drug updateDrug(Drug drug) { return drugRepo.save(drug); }
+    public void deleteDrug(Drug drug) { drugRepo.delete(drug); }
     public Drug getDrug(Long id) { return drugRepo.findById(id).orElse(null); }
 
     public List<ImagingRequest> getImagingRequests() { return imagingRepo.findAll(); }
@@ -374,6 +383,7 @@ public class ClinicDataStore {
     public WardStatus getWard(Long id) { return wardRepo.findById(id).orElse(null); }
     public WardStatus addWard(WardStatus ward) { return wardRepo.save(ward); }
     public WardStatus updateWard(WardStatus ward) { return wardRepo.save(ward); }
+    public void deleteWard(WardStatus ward) { wardRepo.delete(ward); }
     public WardStatus addBed(Long wardId) {
         WardStatus ward = wardRepo.findById(wardId).orElse(null);
         if (ward == null) return null;

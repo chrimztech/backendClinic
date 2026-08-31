@@ -377,6 +377,28 @@ public class ApiController {
         return Map.of("success", true, "staff_id", member.getStaffId(), "entry", toStaffResponse(member));
     }
 
+    @PutMapping("/staff/{staffId}")
+    public Map<String, Object> updateStaff(HttpServletRequest httpRequest, @PathVariable String staffId, @Valid @RequestBody StaffUpdateRequest request) {
+        AppUser actor = requirePermission(httpRequest, "staff.manage");
+        StaffMember member = resolveStaffMember(staffId);
+        if (member == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Staff member not found");
+        }
+        member.setName(request.name());
+        if (hasText(request.manNumber())) {
+            member.setManNumber(request.manNumber().trim());
+        }
+        member.setRole(request.role());
+        member.setDepartment(request.department());
+        member.setPhone(request.phone());
+        member.setEmail(request.email());
+        member.setSpecialization(request.specialization());
+        member.setStatus(isBlank(request.status()) ? member.getStatus() : request.status().trim().toLowerCase(Locale.ROOT));
+        member = dataStore.updateStaffMember(member);
+        writeAuditLog(actor.getName(), actor.getRole(), "update", "Updated staff member " + member.getName() + " (" + member.getStaffId() + ").", "127.0.0.1");
+        return Map.of("success", true, "entry", toStaffResponse(member));
+    }
+
     @PutMapping("/staff/{staffId}/graduate")
     public Map<String, Object> graduateStaff(HttpServletRequest httpRequest, @PathVariable String staffId) {
         requirePermission(httpRequest, "staff.manage");
@@ -613,6 +635,18 @@ public class ApiController {
         return Map.of("success", true, "entry", toDepartmentResponse(department));
     }
 
+    @DeleteMapping("/departments/{code}")
+    public Map<String, Object> deleteDepartment(HttpServletRequest httpRequest, @PathVariable String code) {
+        requirePermission(httpRequest, "departments.manage");
+        Department department = dataStore.getDepartmentByCode(stringValue(code).trim());
+        if (department == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Department not found");
+        }
+        dataStore.deleteDepartment(department);
+        writeAuditLog("System", "Admin", "delete", "Deleted department " + department.getName() + " (" + department.getCode() + ").", "127.0.0.1");
+        return Map.of("success", true);
+    }
+
     // ==================== EXTERNAL SYSTEM INTEGRATION ====================
 
     // Student records (SIS) integration — live student lookups now served by ExternalSisController
@@ -681,6 +715,41 @@ public class ApiController {
         appointment.setNotes(request.notes());
         appointment = dataStore.addAppointment(appointment);
         return Map.of("success", true, "appointment_id", appointment.getAppointmentId(), "entry", toAppointmentResponse(appointment));
+    }
+
+    @PutMapping("/appointments/{id}")
+    public Map<String, Object> updateAppointment(HttpServletRequest httpRequest, @PathVariable Long id, @Valid @RequestBody AppointmentUpdateRequest request) {
+        AppUser actor = requirePermission(httpRequest, "schedules.view");
+        Appointment appointment = requireAppointment(id);
+        if (isEqualIgnoreCase(appointment.getStatus(), "cancelled")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot reschedule a cancelled appointment");
+        }
+        appointment.setDoctorId(request.doctorId());
+        appointment.setDoctorName(request.doctorName());
+        appointment.setDepartment(request.department());
+        appointment.setDate(request.date());
+        appointment.setTime(request.time());
+        appointment.setType(request.type());
+        appointment.setNotes(request.notes());
+        appointment = dataStore.updateAppointment(appointment);
+        writeAuditLog(actor.getName(), actor.getRole(), "update",
+                "Rescheduled appointment " + appointment.getAppointmentId() + " to " + appointment.getDate() + " " + appointment.getTime() + ".", "127.0.0.1");
+        return Map.of("success", true, "entry", toAppointmentResponse(appointment));
+    }
+
+    @PutMapping("/appointments/{id}/status")
+    public Map<String, Object> updateAppointmentStatus(HttpServletRequest httpRequest, @PathVariable Long id, @Valid @RequestBody AppointmentStatusUpdateRequest request) {
+        AppUser actor = requirePermission(httpRequest, "schedules.view");
+        Appointment appointment = requireAppointment(id);
+        String nextStatus = request.status().trim().toLowerCase(Locale.ROOT);
+        if (!List.of("scheduled", "completed", "cancelled", "no-show").contains(nextStatus)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Status must be scheduled, completed, cancelled, or no-show");
+        }
+        appointment.setStatus(nextStatus);
+        appointment = dataStore.updateAppointment(appointment);
+        writeAuditLog(actor.getName(), actor.getRole(), "update",
+                "Marked appointment " + appointment.getAppointmentId() + " as " + nextStatus + ".", "127.0.0.1");
+        return Map.of("success", true, "entry", toAppointmentResponse(appointment));
     }
 
     @GetMapping("/prescriptions")
@@ -1060,6 +1129,18 @@ public class ApiController {
         return Map.of("success", true, "entry", toTariffResponse(tariff));
     }
 
+    @DeleteMapping("/tariffs/{tariffCode}")
+    public Map<String, Object> deleteTariff(HttpServletRequest httpRequest, @PathVariable String tariffCode) {
+        AppUser actor = requirePermission(httpRequest, "tariffs.manage");
+        ServiceTariff tariff = dataStore.getServiceTariffByCode(tariffCode);
+        if (tariff == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Tariff not found");
+        }
+        dataStore.deleteServiceTariff(tariff);
+        writeAuditLog(actor.getName(), actor.getRole(), "delete", "Deleted tariff " + tariff.getTariffCode() + " (" + tariff.getServiceName() + ").", "127.0.0.1");
+        return Map.of("success", true);
+    }
+
     @GetMapping("/billing/{invoiceId}")
     public Map<String, Object> getBillingInvoice(HttpServletRequest httpRequest, @PathVariable String invoiceId) {
         requirePermission(httpRequest, "billing.view");
@@ -1166,6 +1247,33 @@ public class ApiController {
         return Map.of("success", true, "item_code", record.getItemCode(), "entry", toInventoryResponse(record));
     }
 
+    @PutMapping("/inventory/{id}")
+    public Map<String, Object> updateInventory(HttpServletRequest httpRequest, @PathVariable Long id, @Valid @RequestBody InventoryCreateRequest request) {
+        AppUser actor = requirePermission(httpRequest, "inventory.view");
+        InventoryRecord record = requireInventoryRecord(id);
+        int quantity = defaultInt(request.quantity());
+        int minStock = defaultInt(request.minStock());
+        record.setName(request.name());
+        record.setCategory(request.category());
+        record.setQuantity(quantity);
+        record.setUnit(request.unit());
+        record.setMinStock(minStock);
+        record.setLocation(request.location());
+        record.setStatus(quantity == 0 ? "out-of-stock" : quantity <= minStock ? "low-stock" : "in-stock");
+        record = dataStore.updateInventoryRecord(record);
+        writeAuditLog(actor.getName(), actor.getRole(), "update", "Updated inventory item " + record.getName() + " (" + record.getItemCode() + ").", "127.0.0.1");
+        return Map.of("success", true, "entry", toInventoryResponse(record));
+    }
+
+    @DeleteMapping("/inventory/{id}")
+    public Map<String, Object> deleteInventory(HttpServletRequest httpRequest, @PathVariable Long id) {
+        AppUser actor = requirePermission(httpRequest, "inventory.view");
+        InventoryRecord record = requireInventoryRecord(id);
+        dataStore.deleteInventoryRecord(record);
+        writeAuditLog(actor.getName(), actor.getRole(), "delete", "Deleted inventory item " + record.getName() + " (" + record.getItemCode() + ").", "127.0.0.1");
+        return Map.of("success", true);
+    }
+
     @GetMapping("/suppliers")
     public List<Map<String, Object>> getSuppliers(HttpServletRequest httpRequest) {
         requirePermission(httpRequest, "suppliers.view");
@@ -1186,6 +1294,29 @@ public class ApiController {
         supplier.setStatus("active");
         supplier = dataStore.addSupplier(supplier);
         return Map.of("success", true, "supplier_id", supplier.getSupplierId(), "entry", toSupplierResponse(supplier));
+    }
+
+    @PutMapping("/suppliers/{id}")
+    public Map<String, Object> updateSupplier(HttpServletRequest httpRequest, @PathVariable Long id, @Valid @RequestBody SupplierUpdateRequest request) {
+        AppUser actor = requirePermission(httpRequest, "suppliers.view");
+        Supplier supplier = requireSupplier(id);
+        supplier.setName(request.name());
+        supplier.setContact(request.contact());
+        supplier.setPhone(request.phone());
+        supplier.setEmail(request.email());
+        supplier.setStatus(isBlank(request.status()) ? supplier.getStatus() : request.status().trim().toLowerCase(Locale.ROOT));
+        supplier = dataStore.updateSupplier(supplier);
+        writeAuditLog(actor.getName(), actor.getRole(), "update", "Updated supplier " + supplier.getName() + " (" + supplier.getSupplierId() + ").", "127.0.0.1");
+        return Map.of("success", true, "entry", toSupplierResponse(supplier));
+    }
+
+    @DeleteMapping("/suppliers/{id}")
+    public Map<String, Object> deleteSupplier(HttpServletRequest httpRequest, @PathVariable Long id) {
+        AppUser actor = requirePermission(httpRequest, "suppliers.view");
+        Supplier supplier = requireSupplier(id);
+        dataStore.deleteSupplier(supplier);
+        writeAuditLog(actor.getName(), actor.getRole(), "delete", "Deleted supplier " + supplier.getName() + " (" + supplier.getSupplierId() + ").", "127.0.0.1");
+        return Map.of("success", true);
     }
 
     @GetMapping("/users")
@@ -1390,6 +1521,39 @@ public class ApiController {
         return Map.of("success", true, "entry", toDrugResponse(drug));
     }
 
+    @PutMapping("/drugs/{id}")
+    public Map<String, Object> updateDrug(HttpServletRequest httpRequest, @PathVariable Long id, @Valid @RequestBody DrugCreateRequest request) {
+        AppUser actor = requirePermission(httpRequest, "pharmacy.view");
+        Drug drug = requireDrug(id);
+        drug.setName(request.name());
+        drug.setCategory(request.category());
+        drug.setDrugType(request.drugType());
+        if (hasText(request.batchNumber())) {
+            drug.setBatchNumber(request.batchNumber().trim());
+        }
+        drug.setStock(defaultInt(request.stock()));
+        int reorderLevel = defaultInt(request.reorderLevel());
+        drug.setReorderLevel(reorderLevel == 0 ? drug.getReorderLevel() : reorderLevel);
+        drug.setUnit(request.unit());
+        drug.setExpiry(request.expiry());
+        if (hasText(request.storageLocation())) {
+            drug.setStorageLocation(request.storageLocation().trim());
+        }
+        applyDrugStatus(drug);
+        drug = dataStore.updateDrug(drug);
+        writeAuditLog(actor.getName(), actor.getRole(), "update", "Updated drug " + drug.getName() + " (" + drug.getDrugId() + ").", "127.0.0.1");
+        return Map.of("success", true, "entry", toDrugResponse(drug));
+    }
+
+    @DeleteMapping("/drugs/{id}")
+    public Map<String, Object> deleteDrug(HttpServletRequest httpRequest, @PathVariable Long id) {
+        AppUser actor = requirePermission(httpRequest, "pharmacy.view");
+        Drug drug = requireDrug(id);
+        dataStore.deleteDrug(drug);
+        writeAuditLog(actor.getName(), actor.getRole(), "delete", "Deleted drug " + drug.getName() + " (" + drug.getDrugId() + ").", "127.0.0.1");
+        return Map.of("success", true);
+    }
+
     @GetMapping("/imaging")
     public List<Map<String, Object>> getImaging(HttpServletRequest httpRequest) {
         requirePermission(httpRequest, "radiology.view");
@@ -1484,7 +1648,14 @@ public class ApiController {
         record.setUrgency(request.urgency());
         record.setDate(LocalDate.now().toString());
         record.setStatus("pending");
-        record.setNotes("");
+        record.setDestinationFacility(stringValue(request.destinationFacility()).trim());
+        record.setProvisionalDiagnosis(stringValue(request.provisionalDiagnosis()).trim());
+        record.setClinicalSummary(stringValue(request.clinicalSummary()).trim());
+        record.setInvestigations(stringValue(request.investigations()).trim());
+        record.setTreatmentGiven(stringValue(request.treatmentGiven()).trim());
+        record.setVitalSigns(stringValue(request.vitalSigns()).trim());
+        record.setReferringClinicianContact(stringValue(request.referringClinicianContact()).trim());
+        record.setNotes(stringValue(request.notes()).trim());
         record = dataStore.addReferralRecord(record);
         return Map.of("success", true, "referral_id", record.getReferralId(), "entry", toReferralResponse(record));
     }
@@ -1867,6 +2038,54 @@ public class ApiController {
         ward = dataStore.addWard(ward);
         writeAuditLog(actor.getName(), actor.getRole(), "create", "Created ward " + ward.getName() + " with " + totalBeds + " beds.", "127.0.0.1");
         return Map.of("success", true, "entry", toWardResponse(ward, 0));
+    }
+
+    @PutMapping("/wards/{id}")
+    public Map<String, Object> updateWard(HttpServletRequest httpRequest, @PathVariable Long id, @Valid @RequestBody WardCreateRequest request) {
+        AppUser actor = requirePermission(httpRequest, "departments.manage");
+        WardStatus ward = requireWard(id);
+        String newName = stringValue(request.name()).trim();
+        if (isBlank(newName)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ward name is required");
+        }
+        String oldName = ward.getName();
+        boolean renamed = !isEqualIgnoreCase(newName, oldName);
+        if (renamed && dataStore.getWards().stream().anyMatch(w -> w != null && !Objects.equals(w.getId(), id) && isEqualIgnoreCase(w.getName(), newName))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Another ward already uses that name");
+        }
+        int occupiedBeds = countOccupiedBedsForWard(oldName);
+        int requestedTotalBeds = defaultInt(request.totalBeds());
+        if (requestedTotalBeds < occupiedBeds) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Total beds cannot be less than the number of occupied beds");
+        }
+        if (renamed) {
+            for (Admission admission : getActiveAdmissionsForWard(oldName)) {
+                admission.setWard(newName);
+                dataStore.updateAdmission(admission);
+            }
+        }
+        ward.setName(newName);
+        ward.setTotalBeds(requestedTotalBeds);
+        ward.setOccupied(occupiedBeds);
+        ward.setAvailable(Math.max(requestedTotalBeds - occupiedBeds, 0));
+        ward = dataStore.updateWard(ward);
+        writeAuditLog(actor.getName(), actor.getRole(), "update",
+                "Updated ward " + oldName + (renamed ? " (renamed to " + newName + ")" : "") + ". Total beds: " + requestedTotalBeds + ".", "127.0.0.1");
+        return Map.of("success", true, "entry", toWardResponse(ward, occupiedBeds));
+    }
+
+    @DeleteMapping("/wards/{id}")
+    public Map<String, Object> deleteWard(HttpServletRequest httpRequest, @PathVariable Long id) {
+        AppUser actor = requirePermission(httpRequest, "departments.manage");
+        WardStatus ward = requireWard(id);
+        int occupiedBeds = countOccupiedBedsForWard(ward.getName());
+        if (occupiedBeds > 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Cannot delete a ward with " + occupiedBeds + " active admission(s). Discharge or transfer patients first.");
+        }
+        dataStore.deleteWard(ward);
+        writeAuditLog(actor.getName(), actor.getRole(), "delete", "Deleted ward " + ward.getName() + ".", "127.0.0.1");
+        return Map.of("success", true);
     }
 
     @PutMapping("/wards/{id}/beds")
@@ -2370,6 +2589,7 @@ public class ApiController {
         requireEncounterStageAccess(actor, record.getCurrentStage());
         String performedBy = resolveActorName(actor, request != null ? request.performedBy() : null, "Checkout Desk");
         String note = request != null && hasText(request.note()) ? request.note().trim() : "Patient checked out";
+        String previousStage = record.getCurrentStage();
 
         record.setCheckedOut(true);
         record.setCurrentStage("CHECKOUT");
@@ -2384,7 +2604,7 @@ public class ApiController {
         dataStore.updateEncounterRecord(record);
         writeAuditLog(performedBy, "checkout", "Checked out encounter " + record.getEncounterId(), "127.0.0.1");
         Map<String, Object> response = toEncounterResponse(record);
-        wsService.broadcastQueueUpdate(record.getCurrentStage(), response);
+        wsService.broadcastQueueUpdate(previousStage, record.getCurrentStage(), response);
         return Map.of("success", true, "entry", response);
     }
 
@@ -3058,6 +3278,13 @@ public class ApiController {
         response.put("urgency", record.getUrgency());
         response.put("date", record.getDate());
         response.put("status", record.getStatus());
+        response.put("destination_facility", stringValue(record.getDestinationFacility()));
+        response.put("provisional_diagnosis", stringValue(record.getProvisionalDiagnosis()));
+        response.put("clinical_summary", stringValue(record.getClinicalSummary()));
+        response.put("investigations", stringValue(record.getInvestigations()));
+        response.put("treatment_given", stringValue(record.getTreatmentGiven()));
+        response.put("vital_signs", stringValue(record.getVitalSigns()));
+        response.put("referring_clinician_contact", stringValue(record.getReferringClinicianContact()));
         response.put("notes", stringValue(record.getNotes()));
         return response;
     }
@@ -3215,6 +3442,34 @@ public class ApiController {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Drug not found");
         }
         return drug;
+    }
+
+    private Appointment requireAppointment(Long id) {
+        Appointment appointment = dataStore.getAppointments().stream()
+                .filter(Objects::nonNull)
+                .filter(entry -> Objects.equals(entry.getId(), id))
+                .findFirst()
+                .orElse(null);
+        if (appointment == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Appointment not found");
+        }
+        return appointment;
+    }
+
+    private InventoryRecord requireInventoryRecord(Long id) {
+        InventoryRecord record = dataStore.getInventoryRecord(id);
+        if (record == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Inventory item not found");
+        }
+        return record;
+    }
+
+    private Supplier requireSupplier(Long id) {
+        Supplier supplier = dataStore.getSupplier(id);
+        if (supplier == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Supplier not found");
+        }
+        return supplier;
     }
 
     private BloodUnit requireBloodUnit(Long id) {
@@ -4472,27 +4727,8 @@ public class ApiController {
         } catch (ResponseStatusException exception) {
             return false;
         }
-        List<String> required = switch (stage) {
-            case "RECEPTION" -> List.of("walkin.view");
-            case "CONSULTATION" -> List.of("forms.view");
-            case "TRIAGE" -> List.of("triage.view");
-            case "EMERGENCY" -> List.of("emergency.view");
-            case "LABORATORY" -> List.of("laboratory.view");
-            case "RADIOLOGY" -> List.of("radiology.view");
-            case "PHARMACY" -> List.of("pharmacy.view", "pharmacy.dispense");
-            case "ACCOUNTS" -> List.of("billing.view", "billing.payments");
-            case "MCH" -> List.of("mch.view");
-            case "ART" -> List.of("art.view");
-            case "DENTAL" -> List.of("dental.view");
-            case "EYE" -> List.of("eye.view");
-            case "STI" -> List.of("sti.view");
-            case "PHYSIOTHERAPY" -> List.of("physio.view");
-            case "COUNSELING" -> List.of("counseling.view");
-            case "INPATIENT" -> List.of("admissions.view", "wards.view");
-            case "CHECKOUT" -> List.of("records.view", "walkin.view", "billing.view");
-            default -> List.of();
-        };
-        return required.stream().anyMatch(permission -> userHasPermission(user, permission));
+        return EncounterWorkflow.permissionsForStage(stage).stream()
+                .anyMatch(permission -> userHasPermission(user, permission));
     }
 
     private boolean userHasPermission(AppUser user, String permission) {

@@ -9,6 +9,14 @@ public record ReferralCreateRequest(
         @NotBlank String toDept,
         String referredBy,
         @NotBlank String reason,
-        @NotBlank String urgency
+        @NotBlank String urgency,
+        String destinationFacility,
+        String provisionalDiagnosis,
+        String clinicalSummary,
+        String investigations,
+        String treatmentGiven,
+        String vitalSigns,
+        String referringClinicianContact,
+        String notes
 ) {
 }

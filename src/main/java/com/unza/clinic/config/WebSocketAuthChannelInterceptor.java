@@ -86,29 +86,36 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
         }
 
         String destination = accessor.getDestination();
-        String requiredPermission = requiredPermission(destination);
-        if (requiredPermission != null && user.getPermissions().stream().noneMatch(requiredPermission::equalsIgnoreCase)) {
+        List<String> requiredPermissions = requiredPermissions(destination);
+        boolean adminQueueAccess = destination != null
+                && destination.startsWith("/topic/queue/")
+                && !requiredPermissions.isEmpty()
+                && "Admin".equalsIgnoreCase(user.getRole());
+        boolean permitted = requiredPermissions == null || adminQueueAccess
+                || !requiredPermissions.isEmpty() && requiredPermissions.stream().anyMatch(required ->
+                    user.getPermissions().stream().anyMatch(required::equalsIgnoreCase));
+        if (!permitted) {
             throw new MessagingException("You do not have permission to subscribe to " + destination);
         }
     }
 
-    private String requiredPermission(String destination) {
-        if (destination == null) return "__deny__";
+    private List<String> requiredPermissions(String destination) {
+        if (destination == null) return List.of();
         if (destination.startsWith("/topic/queue/")) {
             try {
-                return EncounterWorkflow.permissionForStage(destination.substring("/topic/queue/".length()));
+                return EncounterWorkflow.permissionsForStage(destination.substring("/topic/queue/".length()));
             } catch (IllegalArgumentException ignored) {
-                return "__deny__";
+                return List.of();
             }
         }
         return switch (destination) {
             case "/topic/queue" -> null;
-            case "/topic/notifications" -> "notifications.view";
-            case "/topic/ward-status" -> "wards.view";
-            case "/topic/vital-alerts" -> "triage.view";
-            case "/topic/lab-results" -> "laboratory.view";
-            case "/topic/pharmacy-queue" -> "pharmacy.view";
-            default -> "__deny__";
+            case "/topic/notifications" -> List.of("notifications.view");
+            case "/topic/ward-status" -> List.of("wards.view");
+            case "/topic/vital-alerts" -> List.of("triage.view");
+            case "/topic/lab-results" -> List.of("laboratory.view");
+            case "/topic/pharmacy-queue" -> List.of("pharmacy.view", "pharmacy.dispense");
+            default -> List.of();
         };
     }
 

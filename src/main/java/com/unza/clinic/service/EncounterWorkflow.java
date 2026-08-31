@@ -104,24 +104,29 @@ public final class EncounterWorkflow {
 
     /** Permission required to view or operate a department queue. */
     public static String permissionForStage(String stage) {
+        return permissionsForStage(stage).get(0);
+    }
+
+    /** Any one of these permissions grants access to the department queue. */
+    public static List<String> permissionsForStage(String stage) {
         return switch (normalizeStage(stage)) {
-            case "RECEPTION" -> "walkin.view";
-            case "TRIAGE" -> "triage.view";
-            case "CONSULTATION" -> "forms.view";
-            case "EMERGENCY" -> "emergency.view";
-            case "LABORATORY" -> "laboratory.view";
-            case "RADIOLOGY" -> "radiology.view";
-            case "PHARMACY" -> "pharmacy.view";
-            case "ACCOUNTS" -> "billing.view";
-            case "MCH" -> "mch.view";
-            case "ART" -> "art.view";
-            case "DENTAL" -> "dental.view";
-            case "EYE" -> "eye.view";
-            case "STI" -> "sti.view";
-            case "PHYSIOTHERAPY" -> "physio.view";
-            case "COUNSELING" -> "counseling.view";
-            case "INPATIENT" -> "admissions.view";
-            case "CHECKOUT" -> "records.view";
+            case "RECEPTION" -> List.of("walkin.view");
+            case "TRIAGE" -> List.of("triage.view");
+            case "CONSULTATION" -> List.of("forms.view");
+            case "EMERGENCY" -> List.of("emergency.view");
+            case "LABORATORY" -> List.of("laboratory.view");
+            case "RADIOLOGY" -> List.of("radiology.view");
+            case "PHARMACY" -> List.of("pharmacy.view", "pharmacy.dispense");
+            case "ACCOUNTS" -> List.of("billing.view", "billing.payments");
+            case "MCH" -> List.of("mch.view");
+            case "ART" -> List.of("art.view");
+            case "DENTAL" -> List.of("dental.view");
+            case "EYE" -> List.of("eye.view");
+            case "STI" -> List.of("sti.view");
+            case "PHYSIOTHERAPY" -> List.of("physio.view");
+            case "COUNSELING" -> List.of("counseling.view");
+            case "INPATIENT" -> List.of("admissions.view", "wards.view");
+            case "CHECKOUT" -> List.of("records.view", "walkin.view", "billing.view");
             default -> throw new IllegalArgumentException("Unknown encounter stage: " + stage);
         };
     }

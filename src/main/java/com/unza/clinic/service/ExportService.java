@@ -10,7 +10,11 @@ import com.lowagie.text.PageSize;
 import com.lowagie.text.Paragraph;
 import com.lowagie.text.Phrase;
 import com.lowagie.text.Chunk;
+import com.lowagie.text.Rectangle;
+import com.lowagie.text.pdf.ColumnText;
+import com.lowagie.text.pdf.PdfContentByte;
 import com.lowagie.text.pdf.PdfPCell;
+import com.lowagie.text.pdf.PdfPageEventHelper;
 import com.lowagie.text.pdf.PdfPTable;
 import com.lowagie.text.pdf.PdfWriter;
 
@@ -326,6 +330,89 @@ public class ExportService {
         return out.toByteArray();
     }
 
+    public byte[] exportReferralPdf(ReferralRecord referral, Patient patient) throws DocumentException, IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Document doc = new Document(PageSize.A4, 42, 42, 46, 52);
+        PdfWriter writer = PdfWriter.getInstance(doc, out);
+        writer.setPageEvent(new ReferralFooter());
+        doc.open();
+
+        Color brandGreen = new Color(18, 96, 50);
+        Color brandGold = new Color(242, 169, 0);
+        Color border = new Color(210, 218, 214);
+        com.lowagie.text.Font sectionFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10, Color.WHITE);
+        com.lowagie.text.Font labelFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 7.5f, new Color(91, 99, 95));
+        com.lowagie.text.Font valueFont = FontFactory.getFont(FontFactory.HELVETICA, 9.5f, new Color(32, 38, 35));
+        com.lowagie.text.Font bodyFont = FontFactory.getFont(FontFactory.HELVETICA, 9.5f, Color.BLACK);
+        com.lowagie.text.Font emphasisFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 9.5f, brandGreen);
+
+        addReferralBrandedHeader(doc, brandGreen, brandGold);
+
+        PdfPTable referenceBar = new PdfPTable(3);
+        referenceBar.setWidthPercentage(100);
+        referenceBar.setWidths(new float[]{1.4f, 1f, 1f});
+        referenceBar.setSpacingAfter(10f);
+        addReferenceCell(referenceBar, "REFERRAL NUMBER", nvl(referral.getReferralId()), labelFont, emphasisFont, border);
+        addReferenceCell(referenceBar, "DATE", nvl(referral.getDate()), labelFont, valueFont, border);
+        addUrgencyCell(referenceBar, referral.getUrgency(), labelFont, brandGreen, brandGold);
+        doc.add(referenceBar);
+
+        addReferralSectionHeader(doc, "Patient Details", sectionFont, brandGreen);
+        PdfPTable patientDetails = new PdfPTable(3);
+        patientDetails.setWidthPercentage(100);
+        patientDetails.setWidths(new float[]{1.25f, 1f, 1f});
+        patientDetails.setSpacingAfter(10f);
+        addDetailCell(patientDetails, "FULL NAME", referral.getPatientName(), labelFont, valueFont, border);
+        addDetailCell(patientDetails, "PATIENT / CLINIC NUMBER", firstNonBlank(
+                patient != null ? patient.getClinicNumber() : null, referral.getPatientId()), labelFont, valueFont, border);
+        addDetailCell(patientDetails, "DATE OF BIRTH / AGE", patientDemographicAge(patient), labelFont, valueFont, border);
+        addDetailCell(patientDetails, "GENDER", patient != null ? patient.getGender() : null, labelFont, valueFont, border);
+        addDetailCell(patientDetails, "PHONE", patient != null ? patient.getPhone() : null, labelFont, valueFont, border);
+        addDetailCell(patientDetails, "PATIENT TYPE", patient != null ? patient.getPatientType() : null, labelFont, valueFont, border);
+        doc.add(patientDetails);
+
+        addReferralSectionHeader(doc, "Referral Information", sectionFont, brandGreen);
+        PdfPTable referralDetails = new PdfPTable(3);
+        referralDetails.setWidthPercentage(100);
+        referralDetails.setWidths(new float[]{1.25f, 1f, 1f});
+        referralDetails.setSpacingAfter(10f);
+        addDetailCell(referralDetails, "FROM DEPARTMENT / FACILITY", referral.getFromDept(), labelFont, valueFont, border);
+        addDetailCell(referralDetails, "TO DEPARTMENT / SERVICE", referral.getToDept(), labelFont, valueFont, border);
+        addDetailCell(referralDetails, "DESTINATION FACILITY", referral.getDestinationFacility(), labelFont, valueFont, border);
+        addDetailCell(referralDetails, "REFERRING CLINICIAN", referral.getReferredBy(), labelFont, valueFont, border);
+        addDetailCell(referralDetails, "CLINICIAN CONTACT", referral.getReferringClinicianContact(), labelFont, valueFont, border);
+        addDetailCell(referralDetails, "STATUS", referral.getStatus(), labelFont, valueFont, border);
+        doc.add(referralDetails);
+
+        addReferralSectionHeader(doc, "Clinical Information", sectionFont, brandGreen);
+        addNarrativeBlock(doc, "REASON FOR REFERRAL", referral.getReason(), labelFont, bodyFont, border);
+        addNarrativeBlock(doc, "PROVISIONAL DIAGNOSIS", referral.getProvisionalDiagnosis(), labelFont, bodyFont, border);
+        addNarrativeBlock(doc, "CLINICAL HISTORY AND SUMMARY", referral.getClinicalSummary(), labelFont, bodyFont, border);
+        addNarrativeBlock(doc, "VITAL SIGNS / EXAMINATION FINDINGS", referral.getVitalSigns(), labelFont, bodyFont, border);
+        addNarrativeBlock(doc, "INVESTIGATIONS AND RESULTS", referral.getInvestigations(), labelFont, bodyFont, border);
+        addNarrativeBlock(doc, "TREATMENT GIVEN / CURRENT MANAGEMENT", referral.getTreatmentGiven(), labelFont, bodyFont, border);
+        PdfPTable patientRisks = new PdfPTable(2);
+        patientRisks.setWidthPercentage(100);
+        patientRisks.setWidths(new float[]{1f, 1f});
+        addDetailCell(patientRisks, "KNOWN ALLERGIES", patient != null ? patient.getAllergies() : null,
+                labelFont, bodyFont, border);
+        addDetailCell(patientRisks, "RELEVANT CONDITIONS", patient != null ? patient.getConditions() : null,
+                labelFont, bodyFont, border);
+        doc.add(patientRisks);
+        addNarrativeBlock(doc, "ADDITIONAL NOTES", referral.getNotes(), labelFont, bodyFont, border);
+
+        PdfPTable signature = new PdfPTable(2);
+        signature.setWidthPercentage(100);
+        signature.setWidths(new float[]{1f, 1f});
+        signature.setSpacingBefore(16f);
+        addSignatureCell(signature, "Clinician signature / stamp", border, labelFont);
+        addSignatureCell(signature, "Date received / receiving clinician", border, labelFont);
+        doc.add(signature);
+
+        doc.close();
+        return out.toByteArray();
+    }
+
     // ================================================================
     // Helpers
     // ================================================================
@@ -372,6 +459,176 @@ public class ExportService {
             PdfPCell cell = new PdfPCell(new Phrase(v != null ? v : "", font));
             cell.setPadding(3);
             table.addCell(cell);
+        }
+    }
+
+    private void addReferralSectionHeader(Document doc, String title, com.lowagie.text.Font font, Color background)
+            throws DocumentException {
+        PdfPTable table = new PdfPTable(1);
+        table.setWidthPercentage(100);
+        table.setSpacingBefore(2f);
+        PdfPCell cell = new PdfPCell(new Phrase(title.toUpperCase(), font));
+        cell.setBackgroundColor(background);
+        cell.setBorder(Rectangle.NO_BORDER);
+        cell.setPadding(4.5f);
+        table.addCell(cell);
+        doc.add(table);
+    }
+
+    private void addReferenceCell(PdfPTable table, String label, String value,
+                                  com.lowagie.text.Font labelFont, com.lowagie.text.Font valueFont, Color border) {
+        PdfPCell cell = stackedCell(label, printable(value), labelFont, valueFont, border);
+        cell.setPadding(5f);
+        table.addCell(cell);
+    }
+
+    private void addUrgencyCell(PdfPTable table, String urgency, com.lowagie.text.Font labelFont,
+                                Color brandGreen, Color brandGold) {
+        String normalized = printable(urgency).toUpperCase();
+        Color background = switch (normalized) {
+            case "EMERGENCY" -> new Color(178, 39, 45);
+            case "URGENT" -> new Color(217, 119, 6);
+            default -> brandGreen;
+        };
+        com.lowagie.text.Font urgencyFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10f, Color.WHITE);
+        PdfPCell cell = new PdfPCell();
+        cell.setBackgroundColor(background);
+        cell.setBorderColor(brandGold);
+        cell.setBorderWidth(1f);
+        cell.setPadding(7f);
+        cell.addElement(new Paragraph("URGENCY", FontFactory.getFont(FontFactory.HELVETICA_BOLD, 7.5f, Color.WHITE)));
+        cell.addElement(new Paragraph(normalized, urgencyFont));
+        table.addCell(cell);
+    }
+
+    private void addDetailCell(PdfPTable table, String label, String value,
+                               com.lowagie.text.Font labelFont, com.lowagie.text.Font valueFont, Color border) {
+        table.addCell(stackedCell(label, printable(value), labelFont, valueFont, border));
+    }
+
+    private PdfPCell stackedCell(String label, String value, com.lowagie.text.Font labelFont,
+                                 com.lowagie.text.Font valueFont, Color border) {
+        PdfPCell cell = new PdfPCell();
+        cell.setBorderColor(border);
+        cell.setBorderWidth(0.6f);
+        cell.setPadding(6f);
+        Paragraph labelParagraph = new Paragraph(label, labelFont);
+        labelParagraph.setSpacingAfter(2f);
+        cell.addElement(labelParagraph);
+        cell.addElement(new Paragraph(value, valueFont));
+        return cell;
+    }
+
+    private void addNarrativeBlock(Document doc, String label, String value,
+                                   com.lowagie.text.Font labelFont, com.lowagie.text.Font bodyFont, Color border)
+            throws DocumentException {
+        PdfPTable table = new PdfPTable(1);
+        table.setWidthPercentage(100);
+        table.setSplitRows(true);
+        PdfPCell cell = stackedCell(label, printable(value), labelFont, bodyFont, border);
+        cell.setPadding(5f);
+        table.addCell(cell);
+        doc.add(table);
+    }
+
+    private void addReferralBrandedHeader(Document doc, Color brandGreen, Color brandGold)
+            throws DocumentException {
+        PdfPTable header = new PdfPTable(3);
+        header.setWidthPercentage(100);
+        header.setWidths(new float[]{0.65f, 2.35f, 1.6f});
+        header.setSpacingAfter(5f);
+
+        PdfPCell logoCell = new PdfPCell();
+        logoCell.setBorder(Rectangle.NO_BORDER);
+        logoCell.setPaddingRight(8f);
+        try (InputStream logoStream = getClass().getResourceAsStream("/static/logo.png")) {
+            if (logoStream != null) {
+                Image logo = Image.getInstance(logoStream.readAllBytes());
+                logo.scaleToFit(45f, 45f);
+                logoCell.addElement(logo);
+            }
+        } catch (Exception exception) {
+            LOG.log(Level.WARNING, "Could not load logo for referral PDF header", exception);
+        }
+        header.addCell(logoCell);
+
+        PdfPCell clinicCell = new PdfPCell();
+        clinicCell.setBorder(Rectangle.NO_BORDER);
+        clinicCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        clinicCell.addElement(new Paragraph("UNZA Clinic",
+                FontFactory.getFont(FontFactory.HELVETICA_BOLD, 15f, brandGreen)));
+        clinicCell.addElement(new Paragraph("University of Zambia Health Services",
+                FontFactory.getFont(FontFactory.HELVETICA, 8f, new Color(91, 96, 93))));
+        clinicCell.addElement(new Paragraph("Great East Road Campus, Lusaka, Zambia",
+                FontFactory.getFont(FontFactory.HELVETICA, 8f, new Color(91, 96, 93))));
+        header.addCell(clinicCell);
+
+        PdfPCell titleCell = new PdfPCell();
+        titleCell.setBorder(Rectangle.NO_BORDER);
+        titleCell.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        Paragraph title = new Paragraph("MEDICAL REFERRAL\nLETTER",
+                FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12f, new Color(53, 58, 55)));
+        title.setAlignment(Element.ALIGN_RIGHT);
+        titleCell.addElement(title);
+        header.addCell(titleCell);
+        doc.add(header);
+
+        PdfPTable rule = new PdfPTable(1);
+        rule.setWidthPercentage(100);
+        rule.setSpacingAfter(8f);
+        PdfPCell ruleCell = new PdfPCell(new Phrase(" "));
+        ruleCell.setBorderWidthTop(0f);
+        ruleCell.setBorderWidthLeft(0f);
+        ruleCell.setBorderWidthRight(0f);
+        ruleCell.setBorderWidthBottom(2f);
+        ruleCell.setBorderColorBottom(brandGold);
+        ruleCell.setPadding(0f);
+        rule.addCell(ruleCell);
+        doc.add(rule);
+    }
+
+    private void addSignatureCell(PdfPTable table, String label, Color border, com.lowagie.text.Font labelFont) {
+        PdfPCell cell = new PdfPCell();
+        cell.setBorderColor(border);
+        cell.setBorderWidthTop(0.8f);
+        cell.setBorderWidthLeft(0f);
+        cell.setBorderWidthRight(0f);
+        cell.setBorderWidthBottom(0f);
+        cell.setPaddingTop(7f);
+        cell.setPaddingBottom(10f);
+        cell.addElement(new Paragraph(label, labelFont));
+        table.addCell(cell);
+    }
+
+    private String patientDemographicAge(Patient patient) {
+        if (patient == null) return "Not recorded";
+        String dob = nvl(patient.getDob()).trim();
+        String age = patient.getAge() != null ? patient.getAge() + " years" : "";
+        if (!dob.isEmpty() && !age.isEmpty()) return dob + " / " + age;
+        return printable(firstNonBlank(dob, age));
+    }
+
+    private String printable(String value) {
+        return value == null || value.trim().isEmpty() ? "Not provided" : value.trim();
+    }
+
+    private String firstNonBlank(String first, String second) {
+        return first != null && !first.trim().isEmpty() ? first.trim() : nvl(second).trim();
+    }
+
+    private static final class ReferralFooter extends PdfPageEventHelper {
+        private final com.lowagie.text.Font footerFont =
+                FontFactory.getFont(FontFactory.HELVETICA, 7f, new Color(100, 105, 102));
+
+        @Override
+        public void onEndPage(PdfWriter writer, Document document) {
+            PdfContentByte canvas = writer.getDirectContent();
+            ColumnText.showTextAligned(canvas, Element.ALIGN_LEFT,
+                    new Phrase("CONFIDENTIAL MEDICAL DOCUMENT - Handle in accordance with patient privacy requirements.", footerFont),
+                    document.left(), 24f, 0f);
+            ColumnText.showTextAligned(canvas, Element.ALIGN_RIGHT,
+                    new Phrase("Page " + writer.getPageNumber(), footerFont),
+                    document.right(), 24f, 0f);
         }
     }
 
