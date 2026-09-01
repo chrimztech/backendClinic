@@ -91,8 +91,8 @@ public final class RolePermissions {
                     "records.view", "forms.view", "referrals.view", "physio.view"
             )),
             Map.entry("Security", List.of(
-                    "dashboard.view", "notifications.view",
-                    "security.view", "security.acknowledge", "security.resolve"
+                    "dashboard.view", "sections.view", "notifications.view",
+                    "security.view", "security.report", "security.acknowledge", "security.resolve"
             ))
     );
 

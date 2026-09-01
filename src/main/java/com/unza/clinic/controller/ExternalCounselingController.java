@@ -61,7 +61,7 @@ public class ExternalCounselingController {
     @GetMapping("/referrals")
     public ResponseEntity<?> listReferrals(@RequestParam(required = false) String direction) {
         requireAuth();
-        if (!props.isConfigured()) return ResponseEntity.ok(List.of());
+        if (!isUsable()) return ResponseEntity.ok(List.of());
         try {
             ResponseEntity<Object> resp = rest.exchange(
                     url("/api/clinic/referrals"),
@@ -77,7 +77,7 @@ public class ExternalCounselingController {
     @PostMapping("/referrals")
     public ResponseEntity<?> createReferral(@RequestBody Map<String, Object> body) {
         requireAuth();
-        if (!props.isConfigured()) return ResponseEntity.status(503).body(err("Counseling system not configured"));
+        if (!isUsable()) return ResponseEntity.status(503).body(err("Counseling system not configured"));
         try {
             ResponseEntity<Object> resp = rest.postForEntity(
                     url("/api/clinic/referrals"),
@@ -93,7 +93,7 @@ public class ExternalCounselingController {
     @GetMapping("/referrals/{id}")
     public ResponseEntity<?> getReferral(@PathVariable String id) {
         requireAuth();
-        if (!props.isConfigured()) return ResponseEntity.notFound().build();
+        if (!isUsable()) return ResponseEntity.notFound().build();
         try {
             ResponseEntity<Object> resp = rest.exchange(
                     url("/api/clinic/referrals/" + id),
@@ -114,7 +114,7 @@ public class ExternalCounselingController {
     public ResponseEntity<?> updateReferralStatus(@PathVariable String id,
                                                   @RequestBody Map<String, Object> body) {
         requireAuth();
-        if (!props.isConfigured()) return ResponseEntity.status(503).body(err("Counseling system not configured"));
+        if (!isUsable()) return ResponseEntity.status(503).body(err("Counseling system not configured"));
         try {
             String counselingStatus = mapStatus((String) body.get("status"));
             ResponseEntity<Object> resp = rest.exchange(
@@ -136,7 +136,7 @@ public class ExternalCounselingController {
     @GetMapping("/sessions")
     public ResponseEntity<?> getSessions(@RequestParam(defaultValue = "all") String patientId) {
         requireAuth();
-        if (!props.isConfigured() || "all".equals(patientId)) return ResponseEntity.ok(List.of());
+        if (!isUsable() || "all".equals(patientId)) return ResponseEntity.ok(List.of());
         try {
             ResponseEntity<Object> resp = rest.exchange(
                     url("/api/clinic/visits/client/" + patientId),
@@ -150,7 +150,7 @@ public class ExternalCounselingController {
     @GetMapping("/visits/frequency")
     public ResponseEntity<?> getVisitFrequency(@RequestParam String clientId) {
         requireAuth();
-        if (!props.isConfigured()) return ResponseEntity.ok(Map.of("totalVisits", 0, "clientId", clientId));
+        if (!isUsable()) return ResponseEntity.ok(Map.of("totalVisits", 0, "clientId", clientId));
         try {
             ResponseEntity<Object> resp = rest.exchange(
                     url("/api/clinic/visits/client/" + clientId + "/frequency"),
@@ -166,7 +166,7 @@ public class ExternalCounselingController {
             @RequestParam(defaultValue = "3") int threshold,
             @RequestParam(defaultValue = "90") int withinDays) {
         requireAuth();
-        if (!props.isConfigured()) return ResponseEntity.ok(List.of());
+        if (!isUsable()) return ResponseEntity.ok(List.of());
         try {
             ResponseEntity<Object> resp = rest.exchange(
                     url("/api/clinic/visits/frequent-visitors?threshold=" + threshold + "&withinDays=" + withinDays),
@@ -210,6 +210,19 @@ public class ExternalCounselingController {
 
     private String url(String path) {
         return props.getBaseUrl().stripTrailing() + path;
+    }
+
+    /**
+     * True only when a call to the counseling system can actually succeed:
+     * a base URL is set AND (a static override token is set, or a token is
+     * obtainable via the configured service-account credentials). Unlike
+     * {@link CounselingProperties#isConfigured()} — which only checks the
+     * URL — this avoids making a doomed outbound call (and logging a noisy
+     * 401) when the URL defaults to the real system but no credentials are
+     * configured, as in local dev.
+     */
+    private boolean isUsable() {
+        return props.isConfigured() && tokenService.getToken() != null;
     }
 
     private void requireAuth() {
