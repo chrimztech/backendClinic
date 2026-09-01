@@ -6,7 +6,7 @@ BEGIN
     END IF;
 END $$;
 
-ALTER TABLE referral_records
+ALTER TABLE IF EXISTS referral_records
     ADD COLUMN IF NOT EXISTS destination_facility VARCHAR(200),
     ADD COLUMN IF NOT EXISTS provisional_diagnosis VARCHAR(255),
     ADD COLUMN IF NOT EXISTS clinical_summary TEXT,

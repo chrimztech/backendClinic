@@ -175,7 +175,7 @@ CREATE INDEX idx_va_created_at ON vital_alerts(created_at);
 -- Add notes + approvedAmount to insurance_claims
 -- ===================================================================
 
-ALTER TABLE insurance_claims
+ALTER TABLE IF EXISTS insurance_claims
     ADD COLUMN IF NOT EXISTS notes TEXT,
     ADD COLUMN IF NOT EXISTS approved_amount VARCHAR(50);
 

@@ -395,7 +395,7 @@ CREATE INDEX idx_cdr_rx_id ON controlled_drugs_register(rx_id);
 -- Update prescriptions table with extra pharmacy fields
 -- ===================================================================
 
-ALTER TABLE prescriptions
+ALTER TABLE IF EXISTS prescriptions
     ADD COLUMN IF NOT EXISTS drug_name VARCHAR(200),
     ADD COLUMN IF NOT EXISTS quantity INTEGER DEFAULT 1,
     ADD COLUMN IF NOT EXISTS dosage VARCHAR(100),
