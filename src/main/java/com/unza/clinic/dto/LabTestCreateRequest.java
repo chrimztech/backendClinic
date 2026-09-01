@@ -10,6 +10,7 @@ public record LabTestCreateRequest(
         String section,
         String sampleType,
         String clinicalNotes,
-        String requestedBy
+        String requestedBy,
+        @NotBlank String tariffCode
 ) {
 }

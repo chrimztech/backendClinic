@@ -7,6 +7,7 @@ public record ImagingCreateRequest(
         @NotBlank String patientName,
         @NotBlank String type,
         @NotBlank String bodyPart,
-        String requestedBy
+        String requestedBy,
+        @NotBlank String tariffCode
 ) {
 }

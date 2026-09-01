@@ -1,5 +1,6 @@
 package com.unza.clinic.model;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -19,6 +20,8 @@ public class ServiceTariff {
     private String unitLabel;
     private Double price;
     private String status;
+    @Column(name = "always_billable")
+    private Boolean alwaysBillable = false;
 
     public ServiceTariff() {}
 
@@ -38,4 +41,6 @@ public class ServiceTariff {
     public void setPrice(Double price) { this.price = price; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public Boolean getAlwaysBillable() { return alwaysBillable; }
+    public void setAlwaysBillable(Boolean alwaysBillable) { this.alwaysBillable = alwaysBillable; }
 }

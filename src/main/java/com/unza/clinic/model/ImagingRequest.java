@@ -1,5 +1,6 @@
 package com.unza.clinic.model;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -13,6 +14,8 @@ public class ImagingRequest {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     private String requestId;
+    @Column(name = "tariff_code")
+    private String tariffCode;
     private String patientId;
     private String patientName;
     private String type;
@@ -47,4 +50,6 @@ public class ImagingRequest {
     public void setFindings(String findings) { this.findings = findings; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getTariffCode() { return tariffCode; }
+    public void setTariffCode(String tariffCode) { this.tariffCode = tariffCode; }
 }

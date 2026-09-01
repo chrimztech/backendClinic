@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.unza.clinic.model.*;
 import com.unza.clinic.dto.*;
 import com.unza.clinic.model.LoginAuditLog;
+import com.unza.clinic.service.AutoBillingService;
 import com.unza.clinic.service.ClinicDataStore;
 import com.unza.clinic.service.DataBackupService;
 import com.unza.clinic.service.EncounterWorkflow;
@@ -64,13 +65,14 @@ public class ApiController {
      private final RefreshTokenService refreshTokenService;
      private final HrDirectoryService hrDirectoryService;
      private final SisDirectoryService sisDirectoryService;
+     private final AutoBillingService autoBillingService;
      private final ObjectMapper objectMapper = new ObjectMapper();
 
       public ApiController(ClinicDataStore dataStore, DataBackupService backupService, JwtUtil jwtUtil, JdbcTemplate jdbc,
                            com.unza.clinic.repository.PrescriptionItemRepository prescriptionItemRepository,
                            WebSocketNotificationService wsService, LoginRateLimiter rateLimiter,
                            RefreshTokenService refreshTokenService, HrDirectoryService hrDirectoryService,
-                           SisDirectoryService sisDirectoryService) {
+                           SisDirectoryService sisDirectoryService, AutoBillingService autoBillingService) {
           this.dataStore = dataStore;
           this.backupService = backupService;
           this.jwtUtil = jwtUtil;
@@ -81,6 +83,7 @@ public class ApiController {
           this.refreshTokenService = refreshTokenService;
           this.hrDirectoryService = hrDirectoryService;
           this.sisDirectoryService = sisDirectoryService;
+          this.autoBillingService = autoBillingService;
       }
 
      @GetMapping("/")
@@ -812,7 +815,13 @@ public class ApiController {
     }
 
     @PostMapping("/prescriptions/{id}/dispense")
-    public Map<String, Object> dispensePrescription(HttpServletRequest httpRequest, @PathVariable Long id) {
+    public Map<String, Object> dispensePrescription(HttpServletRequest httpRequest, @PathVariable Long id,
+                                                      @RequestBody(required = false) DispenseRequest request) {
+        return dispensePrescriptionInternal(httpRequest, id, request == null ? null : request.items());
+    }
+
+    private Map<String, Object> dispensePrescriptionInternal(HttpServletRequest httpRequest, Long id,
+                                                               List<DispenseChargeItem> chargeItems) {
         AppUser actor = requireAnyPermission(httpRequest, List.of("pharmacy.dispense", "pharmacy.view"));
         Prescription prescription = dataStore.getPrescription(id);
         if (prescription == null) {
@@ -865,6 +874,26 @@ public class ApiController {
         prescription.setDispensedAt(LocalDateTime.now());
         prescription = dataStore.updatePrescription(prescription);
         writeAuditLog(actor.getName(), actor.getRole(), "update", "Dispensed prescription " + prescription.getRxId() + " (" + lineItems.size() + " item(s)).", "127.0.0.1");
+
+        if (chargeItems != null && !chargeItems.isEmpty()) {
+            Patient dispensePatient = resolvePatient(prescription.getPatientId());
+            EncounterRecord dispenseEncounter = findActiveEncounterForPatient(prescription.getPatientId());
+            boolean anyCharged = false;
+            for (DispenseChargeItem item : chargeItems) {
+                if (item == null || isBlank(item.tariffCode())) {
+                    continue;
+                }
+                int qty = item.quantity() == null || item.quantity() <= 0 ? 1 : item.quantity();
+                AutoBillingService.AutoBillingResult result = autoBillingService.postCharge(
+                        dispenseEncounter, dispensePatient, item.tariffCode(), qty,
+                        "Dispensed: " + stringValue(item.drugName()), false);
+                anyCharged = anyCharged || (result.posted() && !result.exempt() && result.lineTotal() > 0);
+            }
+            if (anyCharged) {
+                updateActiveEncounterPayment(prescription.getPatientId(), "PENDING", "Medication charged");
+            }
+        }
+
         routeAfterPharmacyDispense(prescription.getPatientId(), actor.getName());
         return Map.of("success", true, "entry", toPrescriptionResponse(prescription));
     }
@@ -981,7 +1010,16 @@ public class ApiController {
         labTest.setSpecimenCollectedAt("");
         labTest.setApprovedBy("");
         labTest.setApprovedAt("");
+        labTest.setTariffCode(request.tariffCode());
         labTest = dataStore.addLabTest(labTest);
+
+        EncounterRecord labEncounter = findActiveEncounterForPatient(labTest.getPatientId());
+        AutoBillingService.AutoBillingResult labCharge = autoBillingService.postCharge(
+                labEncounter, linkedPatient, request.tariffCode(), 1, "Lab Test: " + labTest.getTest(), false);
+        if (labCharge.posted() && !labCharge.exempt() && labCharge.lineTotal() > 0) {
+            updateActiveEncounterPayment(labTest.getPatientId(), "PENDING", "Lab test charged");
+        }
+
         return Map.of("success", true, "test_id", labTest.getTestId(), "entry", toLabTestResponse(labTest));
     }
 
@@ -1098,6 +1136,7 @@ public class ApiController {
         tariff.setUnitLabel(request.unitLabel().trim());
         tariff.setPrice(value(request.price()));
         tariff.setStatus(isBlank(request.status()) ? "active" : request.status().trim().toLowerCase(Locale.ROOT));
+        tariff.setAlwaysBillable(Boolean.TRUE.equals(request.alwaysBillable()));
         tariff = dataStore.addServiceTariff(tariff);
         return Map.of("success", true, "entry", toTariffResponse(tariff));
     }
@@ -1125,6 +1164,7 @@ public class ApiController {
         tariff.setUnitLabel(request.unitLabel().trim());
         tariff.setPrice(value(request.price()));
         tariff.setStatus(isBlank(request.status()) ? "active" : request.status().trim().toLowerCase(Locale.ROOT));
+        tariff.setAlwaysBillable(Boolean.TRUE.equals(request.alwaysBillable()));
         tariff = dataStore.addServiceTariff(tariff);
         return Map.of("success", true, "entry", toTariffResponse(tariff));
     }
@@ -1575,7 +1615,16 @@ public class ApiController {
         imagingRequest.setRequestDate(LocalDate.now().toString());
         imagingRequest.setFindings("");
         imagingRequest.setStatus("pending");
+        imagingRequest.setTariffCode(request.tariffCode());
         imagingRequest = dataStore.addImagingRequest(imagingRequest);
+
+        EncounterRecord imagingEncounter = findActiveEncounterForPatient(imagingRequest.getPatientId());
+        AutoBillingService.AutoBillingResult imagingCharge = autoBillingService.postCharge(
+                imagingEncounter, linkedPatient, request.tariffCode(), 1, "Imaging: " + imagingRequest.getType(), false);
+        if (imagingCharge.posted() && !imagingCharge.exempt() && imagingCharge.lineTotal() > 0) {
+            updateActiveEncounterPayment(imagingRequest.getPatientId(), "PENDING", "Imaging charged");
+        }
+
         return Map.of("success", true, "request_id", imagingRequest.getRequestId(), "entry", toImagingResponse(imagingRequest));
     }
 
@@ -2415,6 +2464,7 @@ public class ApiController {
         if (hasText(request.note())) record.setNotes(appendHistory(record.getNotes(), note));
 
         dataStore.updateEncounterRecord(record);
+        maybeChargeConsultationFee(record);
         writeAuditLog(performedBy, "update", "Moved encounter " + record.getEncounterId() + " to " + stage, "127.0.0.1");
         Map<String, Object> response = toEncounterResponse(record);
         wsService.broadcastQueueUpdate(previousStage, record.getCurrentStage(), response);
@@ -3044,6 +3094,7 @@ public class ApiController {
         response.put("patient_id", test.getPatientId());
         response.put("patient_name", test.getPatientName());
         response.put("test", test.getTest());
+        response.put("tariff_code", stringValue(test.getTariffCode()));
         response.put("category", stringValue(test.getCategory()));
         response.put("section", stringValue(test.getSection()));
         response.put("sample_type", stringValue(test.getSampleType()));
@@ -3073,6 +3124,7 @@ public class ApiController {
         response.put("unit_label", tariff.getUnitLabel());
         response.put("price", tariff.getPrice());
         response.put("status", tariff.getStatus());
+        response.put("always_billable", Boolean.TRUE.equals(tariff.getAlwaysBillable()));
         return response;
     }
 
@@ -3091,6 +3143,7 @@ public class ApiController {
         response.put("due_date", stringValue(invoice.getDueDate()));
         response.put("paid_date", stringValue(invoice.getPaidDate()));
         response.put("payment_method", stringValue(invoice.getPaymentMethod()));
+        response.put("encounter_id", invoice.getEncounterId());
         return response;
     }
 
@@ -3252,6 +3305,7 @@ public class ApiController {
         response.put("patient_id", request.getPatientId());
         response.put("patient_name", request.getPatientName());
         response.put("type", request.getType());
+        response.put("tariff_code", stringValue(request.getTariffCode()));
         response.put("body_part", request.getBodyPart());
         response.put("requested_by", request.getRequestedBy());
         response.put("radiologist", stringValue(request.getRadiologist()));
@@ -4158,6 +4212,20 @@ public class ApiController {
         wsService.broadcastQueueUpdate(encounter.getCurrentStage(), toEncounterResponse(encounter));
     }
 
+    private static final String CONSULT_FEE_TARIFF_CODE = "CONSULT-FEE";
+
+    private void maybeChargeConsultationFee(EncounterRecord encounter) {
+        if (encounter == null || !"CONSULTATION".equalsIgnoreCase(encounter.getCurrentStage())) {
+            return;
+        }
+        Patient patient = resolvePatient(encounter.getPatientId());
+        AutoBillingService.AutoBillingResult result = autoBillingService.postCharge(
+                encounter, patient, CONSULT_FEE_TARIFF_CODE, 1, "Consultation", true);
+        if (result.posted() && !result.exempt() && result.lineTotal() > 0) {
+            updateActiveEncounterPayment(encounter.getPatientId(), "PENDING", "Consultation fee charged");
+        }
+    }
+
     private void routeAfterPharmacyDispense(String patientId, String performedBy) {
         boolean paymentPending = dataStore.getBillingInvoices().stream()
                 .filter(invoice -> isEqualIgnoreCase(invoice.getPatientId(), patientId))
@@ -4190,6 +4258,7 @@ public class ApiController {
                     && !"PENDING".equalsIgnoreCase(encounter.getPaymentStatus()));
         }
         dataStore.updateEncounterRecord(encounter);
+        maybeChargeConsultationFee(encounter);
         writeAuditLog(performedBy, "automatic_handoff", "Moved encounter " + encounter.getEncounterId()
                 + " from " + previousStage + " to " + destination, "127.0.0.1");
         wsService.broadcastQueueUpdate(previousStage, destination, toEncounterResponse(encounter));
@@ -5397,7 +5466,15 @@ public class ApiController {
         // Reuse the stock-checked dispensing path so this richer pharmacy
         // screen cannot bypass inventory deductions.
         if (!isEqualIgnoreCase(prescription.getStatus(), "dispensed")) {
-            dispensePrescription(req, prescription.getId());
+            List<DispenseChargeItem> chargeItems = null;
+            try {
+                if (body.get("items") != null) {
+                    chargeItems = objectMapper.convertValue(body.get("items"), new TypeReference<List<DispenseChargeItem>>() {});
+                }
+            } catch (Exception ignored) {
+                // Malformed charge items must not block dispensing.
+            }
+            dispensePrescriptionInternal(req, prescription.getId(), chargeItems);
             prescription = dataStore.getPrescription(prescription.getId());
         }
 

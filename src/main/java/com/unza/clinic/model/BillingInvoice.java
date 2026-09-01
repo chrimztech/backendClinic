@@ -1,5 +1,6 @@
 package com.unza.clinic.model;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -26,6 +27,8 @@ public class BillingInvoice {
     private String dueDate;
     private String paidDate;
     private String paymentMethod;
+    @Column(name = "encounter_id")
+    private Long encounterId;
 
     public BillingInvoice() {}
 
@@ -55,4 +58,6 @@ public class BillingInvoice {
     public void setPaidDate(String paidDate) { this.paidDate = paidDate; }
     public String getPaymentMethod() { return paymentMethod; }
     public void setPaymentMethod(String paymentMethod) { this.paymentMethod = paymentMethod; }
+    public Long getEncounterId() { return encounterId; }
+    public void setEncounterId(Long encounterId) { this.encounterId = encounterId; }
 }

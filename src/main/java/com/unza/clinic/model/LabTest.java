@@ -1,5 +1,6 @@
 package com.unza.clinic.model;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -13,6 +14,8 @@ public class LabTest {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     private String testId;
+    @Column(name = "tariff_code")
+    private String tariffCode;
     private String patientId;
     private String patientName;
     private String test;
@@ -77,4 +80,6 @@ public class LabTest {
     public void setApprovedBy(String approvedBy) { this.approvedBy = approvedBy; }
     public String getApprovedAt() { return approvedAt; }
     public void setApprovedAt(String approvedAt) { this.approvedAt = approvedAt; }
+    public String getTariffCode() { return tariffCode; }
+    public void setTariffCode(String tariffCode) { this.tariffCode = tariffCode; }
 }

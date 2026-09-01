@@ -9,6 +9,7 @@ public record ServiceTariffRequest(
         @NotBlank String serviceName,
         @NotBlank String unitLabel,
         Double price,
-        String status
+        String status,
+        Boolean alwaysBillable
 ) {
 }
