@@ -210,8 +210,14 @@ public class ApiController {
     @PostMapping("/patients")
     public Map<String, Object> createPatient(HttpServletRequest httpRequest, @Valid @RequestBody PatientCreateRequest request) {
         requireAnyPermission(httpRequest, List.of("walkin.view", "patients.manage"));
-        Patient patient = new Patient();
         String patientType = normalizePatientType(request.patientType());
+        Patient duplicate = findDuplicatePatient(patientType, stringValue(request.studentId()), stringValue(request.manNumber()), stringValue(request.phone()));
+        if (duplicate != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "A matching patient is already registered: " + duplicate.getName() + " (" + duplicate.getClinicNumber()
+                            + "). Open their existing record instead of registering a duplicate.");
+        }
+        Patient patient = new Patient();
         String clinicNumber = resolveClinicNumber(request.clinicNumber(), patientType, stringValue(request.studentId()), stringValue(request.manNumber()));
         patient.setPatientId(clinicNumber);
         patient.setClinicNumber(clinicNumber);
@@ -506,6 +512,23 @@ public class ApiController {
             return "GENERAL";
         }
         return patientType.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private Patient findDuplicatePatient(String patientType, String studentId, String manNumber, String phone) {
+        String normalizedStudentId = stringValue(studentId).trim();
+        String normalizedManNumber = stringValue(manNumber).trim();
+        String normalizedPhone = stringValue(phone).trim();
+        boolean isStudent = isStudentPatientType(patientType);
+        boolean isStaffLinked = isStaffLinkedPatientType(patientType);
+        return dataStore.getPatients().stream()
+                .filter(existing -> (isStudent && !normalizedStudentId.isBlank()
+                                && normalizedStudentId.equalsIgnoreCase(stringValue(existing.getStudentId()).trim()))
+                        || (isStaffLinked && !normalizedManNumber.isBlank()
+                                && normalizedManNumber.equalsIgnoreCase(stringValue(existing.getManNumber()).trim()))
+                        || (!normalizedPhone.isBlank()
+                                && normalizedPhone.equalsIgnoreCase(stringValue(existing.getPhone()).trim())))
+                .findFirst()
+                .orElse(null);
     }
 
     private String resolveClinicNumber(String requestedClinicNumber, String patientType, String studentId, String manNumber) {
