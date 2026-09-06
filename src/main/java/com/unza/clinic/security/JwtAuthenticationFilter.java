@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.unza.clinic.model.AppUser;
 import com.unza.clinic.model.AuthUserDetails;
 import com.unza.clinic.service.ClinicDataStore;
+import com.unza.clinic.service.DepartmentAccessService;
 import com.unza.clinic.util.JwtUtil;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -26,11 +27,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtil jwtUtil;
     private final ClinicDataStore dataStore;
+    private final DepartmentAccessService departmentAccessService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public JwtAuthenticationFilter(JwtUtil jwtUtil, ClinicDataStore dataStore) {
+    public JwtAuthenticationFilter(JwtUtil jwtUtil, ClinicDataStore dataStore,
+                                   DepartmentAccessService departmentAccessService) {
         this.jwtUtil = jwtUtil;
         this.dataStore = dataStore;
+        this.departmentAccessService = departmentAccessService;
     }
 
     @Override
@@ -74,6 +78,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     }
                 } else {
                     permissions = new ArrayList<>(getDefaultPermissionsForRole(role));
+                }
+                if (user != null) {
+                    permissions = new ArrayList<>(departmentAccessService.expandPermissions(user, permissions));
                 }
 
                 List<SimpleGrantedAuthority> authorities = new ArrayList<>();
@@ -212,7 +219,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return new String[] { "attendance.view" };
         }
         if (path.startsWith("/api/staff-schedules")) {
-            return new String[] { "schedules.view" };
+            return "GET".equals(method) ? new String[] { "schedules.view" } : new String[] { "schedules.manage" };
+        }
+        if (path.startsWith("/api/consultation-rooms")) {
+            return "GET".equals(method) ? new String[] { "sections.view", "forms.view" }
+                    : new String[] { "departments.manage", "schedules.manage" };
         }
         if (path.startsWith("/api/wards")) {
             return "GET".equals(method) ? new String[] { "wards.view" } : new String[] { "departments.manage" };
@@ -229,8 +240,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     "prescriptions.view", "laboratory.view", "radiology.view", "pharmacy.view",
                     "pharmacy.dispense", "admissions.view", "wards.view", "billing.view",
                     "counseling.view", "mch.view", "art.view", "dental.view", "eye.view",
-                    "sti.view", "physio.view"
+                    "vct.view", "sti.view", "physio.view"
             };
+        }
+        if (path.startsWith("/api/vct")) {
+            return new String[] { "vct.view" };
         }
         if (path.startsWith("/api/clinical-forms")) {
             return new String[] { "forms.view" };

@@ -16,6 +16,7 @@ class EncounterWorkflowTests {
         assertTrue(EncounterWorkflow.canTransition("RECEPTION", "TRIAGE"));
         assertTrue(EncounterWorkflow.canTransition("reception", "dental"));
         assertTrue(EncounterWorkflow.canTransition("RECEPTION", "ART"));
+        assertTrue(EncounterWorkflow.canTransition("RECEPTION", "VCT"));
         assertFalse(EncounterWorkflow.canTransition("RECEPTION", "LABORATORY"));
     }
 
@@ -38,6 +39,7 @@ class EncounterWorkflowTests {
     void queuesHaveDepartmentPermissionsAndResponseTargets() {
         assertEquals("walkin.view", EncounterWorkflow.permissionForStage("RECEPTION"));
         assertEquals("laboratory.view", EncounterWorkflow.permissionForStage("LABORATORY"));
+        assertEquals("vct.view", EncounterWorkflow.permissionForStage("VCT"));
         assertEquals(List.of("pharmacy.view", "pharmacy.dispense"),
                 EncounterWorkflow.permissionsForStage("PHARMACY"));
         assertEquals(List.of("records.view", "walkin.view", "billing.view"),

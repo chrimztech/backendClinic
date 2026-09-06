@@ -6,6 +6,8 @@ public record EncounterCreateRequest(
         @NotBlank String patientId,
         @NotBlank String patientName,
         String patientType,
+        String purpose,
+        String serviceCode,
         String createdBy,
         String currentStage,
         String pendingActions,

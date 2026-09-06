@@ -20,19 +20,19 @@ public final class RolePermissions {
                     "forms.view", "prescriptions.view", "referrals.view", "laboratory.view", "radiology.view",
                     "bloodbank.view", "pharmacy.view", "pharmacy.dispense", "suppliers.view", "inventory.view", "wards.view",
                     "admissions.view", "billing.view", "billing.create", "billing.payments", "insurance.view",
-                    "counseling.view", "mch.view", "art.view", "dental.view", "eye.view", "sti.view", "physio.view",
+                    "counseling.view", "mch.view", "art.view", "vct.view", "dental.view", "eye.view", "sti.view", "physio.view",
                     "departments.manage", "attendance.view", "users.manage", "users.reset_password",
-                    "patients.manage", "staff.manage",
+                    "patients.manage", "staff.manage", "schedules.manage",
                     "audit.view", "audit.export", "reports.view", "settings.view", "settings.manage",
                     "backup.export", "tariffs.manage",
                     "security.view", "security.acknowledge", "security.resolve", "security.report"
             )),
-            Map.entry("Doctor", List.of(
+            Map.entry("Clinician", List.of(
                     "dashboard.view", "sections.view", "notifications.view", "patients.view", "patients.manage", "walkin.view",
                     "triage.view", "emergency.view", "staff.view", "schedules.view", "records.view",
                     "forms.view", "prescriptions.view", "referrals.view", "counseling.view", "laboratory.view", "radiology.view",
                     "bloodbank.view", "wards.view", "admissions.view", "reports.view",
-                    "mch.view", "art.view", "dental.view", "eye.view", "sti.view", "physio.view",
+                    "mch.view", "art.view", "vct.view", "dental.view", "eye.view", "sti.view", "physio.view",
                     "security.report"
             )),
             Map.entry("Nurse", List.of(
@@ -43,7 +43,7 @@ public final class RolePermissions {
             )),
             Map.entry("MCH Nurse", List.of(
                     "dashboard.view", "sections.view", "notifications.view", "patients.view", "walkin.view",
-                    "triage.view", "records.view", "forms.view", "mch.view", "referrals.view",
+                    "triage.view", "records.view", "forms.view", "mch.view", "art.view", "vct.view", "referrals.view",
                     "security.report"
             )),
             Map.entry("Receptionist", List.of(
@@ -62,7 +62,7 @@ public final class RolePermissions {
             Map.entry("Pharmacist", List.of(
                     "dashboard.view", "sections.view", "notifications.view", "patients.view",
                     "forms.view", "pharmacy.view", "pharmacy.dispense", "suppliers.view", "inventory.view",
-                    "prescriptions.view", "billing.view", "billing.create", "billing.payments"
+                    "prescriptions.view", "billing.view", "billing.create"
             )),
             Map.entry("Lab Technician", List.of(
                     "dashboard.view", "sections.view", "notifications.view", "patients.view",
@@ -75,8 +75,18 @@ public final class RolePermissions {
             Map.entry("Counselor", List.of(
                     "dashboard.view", "sections.view", "notifications.view", "patients.view",
                     "records.view", "forms.view", "counseling.view", "referrals.view",
-                    "art.view", "sti.view",
+                    "art.view", "vct.view", "sti.view",
                     "security.report"
+            )),
+            Map.entry("VCT Counselor", List.of(
+                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
+                    "records.view", "forms.view", "counseling.view", "vct.view", "referrals.view", "art.view",
+                    "security.report"
+            )),
+            Map.entry("Department Head", List.of(
+                    "dashboard.view", "sections.view", "notifications.view", "patients.view",
+                    "staff.view", "schedules.view", "schedules.manage", "records.view", "forms.view",
+                    "referrals.view", "reports.view", "security.report"
             )),
             Map.entry("Dentist", List.of(
                     "dashboard.view", "sections.view", "notifications.view", "patients.view", "walkin.view",
@@ -100,8 +110,12 @@ public final class RolePermissions {
         if (role == null) {
             return List.of("dashboard.view");
         }
+        String normalizedRole = role.trim();
+        if ("Doctor".equalsIgnoreCase(normalizedRole)) {
+            normalizedRole = "Clinician";
+        }
         for (Map.Entry<String, List<String>> entry : DEFAULTS.entrySet()) {
-            if (entry.getKey().equalsIgnoreCase(role.trim())) {
+            if (entry.getKey().equalsIgnoreCase(normalizedRole)) {
                 return entry.getValue();
             }
         }

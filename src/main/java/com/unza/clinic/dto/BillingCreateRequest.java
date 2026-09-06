@@ -4,6 +4,7 @@ import jakarta.validation.constraints.NotBlank;
 import java.util.List;
 
 public record BillingCreateRequest(
+        Long encounterId,
         @NotBlank String patientId,
         @NotBlank String patientName,
         String items,

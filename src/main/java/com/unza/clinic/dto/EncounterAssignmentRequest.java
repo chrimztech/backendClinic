@@ -4,6 +4,7 @@ public record EncounterAssignmentRequest(
         String assignedTo,
         String status,
         String performedBy,
-        String note
+        String note,
+        String consultationRoomCode
 ) {
 }

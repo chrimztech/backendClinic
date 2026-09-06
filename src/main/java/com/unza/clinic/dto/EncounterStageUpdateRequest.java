@@ -9,6 +9,9 @@ public record EncounterStageUpdateRequest(
         String completedActions,
         String paymentStatus,
         Boolean checkoutEligible,
-        String priority
+        String priority,
+        String purpose,
+        String serviceCode,
+        String consultationRoomCode
 ) {
 }

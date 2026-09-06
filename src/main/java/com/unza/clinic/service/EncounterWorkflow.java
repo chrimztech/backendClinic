@@ -26,15 +26,16 @@ public final class EncounterWorkflow {
 
     static {
         Map<String, List<String>> transitions = new LinkedHashMap<>();
-        transitions.put("RECEPTION", List.of("TRIAGE", "CONSULTATION", "EMERGENCY", "MCH", "ART", "DENTAL", "EYE", "STI", "PHYSIOTHERAPY", "COUNSELING"));
-        transitions.put("TRIAGE", List.of("CONSULTATION", "EMERGENCY", "MCH", "ART", "DENTAL", "EYE", "STI", "PHYSIOTHERAPY", "COUNSELING", "INPATIENT"));
-        transitions.put("CONSULTATION", List.of("TRIAGE", "LABORATORY", "RADIOLOGY", "PHARMACY", "ACCOUNTS", "MCH", "ART", "DENTAL", "EYE", "STI", "PHYSIOTHERAPY", "COUNSELING", "EMERGENCY", "INPATIENT", "CHECKOUT"));
+        transitions.put("RECEPTION", List.of("TRIAGE", "CONSULTATION", "EMERGENCY", "MCH", "VCT", "ART", "DENTAL", "EYE", "STI", "PHYSIOTHERAPY", "COUNSELING"));
+        transitions.put("TRIAGE", List.of("CONSULTATION", "EMERGENCY", "MCH", "VCT", "ART", "DENTAL", "EYE", "STI", "PHYSIOTHERAPY", "COUNSELING", "INPATIENT"));
+        transitions.put("CONSULTATION", List.of("TRIAGE", "LABORATORY", "RADIOLOGY", "PHARMACY", "ACCOUNTS", "MCH", "VCT", "ART", "DENTAL", "EYE", "STI", "PHYSIOTHERAPY", "COUNSELING", "EMERGENCY", "INPATIENT", "CHECKOUT"));
         transitions.put("EMERGENCY", List.of("CONSULTATION", "LABORATORY", "RADIOLOGY", "PHARMACY", "INPATIENT", "CHECKOUT"));
         transitions.put("LABORATORY", List.of("CONSULTATION", "PHARMACY", "ACCOUNTS", "CHECKOUT"));
         transitions.put("RADIOLOGY", List.of("CONSULTATION", "PHARMACY", "ACCOUNTS", "CHECKOUT"));
         transitions.put("PHARMACY", List.of("CONSULTATION", "ACCOUNTS", "CHECKOUT"));
         transitions.put("ACCOUNTS", List.of("PHARMACY", "CHECKOUT"));
         transitions.put("MCH", specialistDestinations());
+        transitions.put("VCT", List.of("ART", "CONSULTATION", "COUNSELING", "ACCOUNTS", "CHECKOUT"));
         transitions.put("ART", specialistDestinations());
         transitions.put("DENTAL", specialistDestinations());
         transitions.put("EYE", specialistDestinations());
@@ -48,13 +49,14 @@ public final class EncounterWorkflow {
         Map<String, List<String>> tasks = new LinkedHashMap<>();
         tasks.put("RECEPTION", List.of("Identity verification", "Department routing"));
         tasks.put("TRIAGE", List.of("Triage assessment", "Vital signs recorded"));
-        tasks.put("CONSULTATION", List.of("Clinical consultation", "Clinical notes completed"));
+        tasks.put("CONSULTATION", List.of("Clinician consultation", "Clinical notes completed"));
         tasks.put("EMERGENCY", List.of("Emergency assessment", "Emergency care documented"));
         tasks.put("LABORATORY", List.of("Laboratory investigation completed", "Results released"));
         tasks.put("RADIOLOGY", List.of("Imaging completed", "Imaging report released"));
         tasks.put("PHARMACY", List.of("Prescription verified", "Medication dispensed"));
         tasks.put("ACCOUNTS", List.of("Payment clearance"));
         tasks.put("MCH", List.of("MCH review", "Maternal or child care documented"));
+        tasks.put("VCT", List.of("Consent and pre-test counseling", "HIV test recorded", "Post-test counseling and ART linkage"));
         tasks.put("ART", List.of("ART review", "ART care documented"));
         tasks.put("DENTAL", List.of("Dental assessment", "Dental care documented"));
         tasks.put("EYE", List.of("Eye assessment", "Eye care documented"));
@@ -75,6 +77,7 @@ public final class EncounterWorkflow {
         slaMinutes.put("PHARMACY", 20);
         slaMinutes.put("ACCOUNTS", 15);
         slaMinutes.put("MCH", 30);
+        slaMinutes.put("VCT", 30);
         slaMinutes.put("ART", 30);
         slaMinutes.put("DENTAL", 30);
         slaMinutes.put("EYE", 30);
@@ -119,6 +122,7 @@ public final class EncounterWorkflow {
             case "PHARMACY" -> List.of("pharmacy.view", "pharmacy.dispense");
             case "ACCOUNTS" -> List.of("billing.view", "billing.payments");
             case "MCH" -> List.of("mch.view");
+            case "VCT" -> List.of("vct.view");
             case "ART" -> List.of("art.view");
             case "DENTAL" -> List.of("dental.view");
             case "EYE" -> List.of("eye.view");

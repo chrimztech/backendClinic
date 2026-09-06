@@ -8,6 +8,7 @@ import com.unza.clinic.model.LoginAuditLog;
 import com.unza.clinic.service.AutoBillingService;
 import com.unza.clinic.service.ClinicDataStore;
 import com.unza.clinic.service.DataBackupService;
+import com.unza.clinic.service.DepartmentAccessService;
 import com.unza.clinic.service.EncounterWorkflow;
 import com.unza.clinic.service.HrDirectoryService;
 import com.unza.clinic.service.LoginRateLimiter;
@@ -52,7 +53,7 @@ public class ApiController {
              "prescriptions.view", "laboratory.view", "radiology.view", "pharmacy.view",
              "pharmacy.dispense", "admissions.view", "wards.view", "billing.view",
              "counseling.view", "mch.view", "art.view", "dental.view", "eye.view",
-             "sti.view", "physio.view"
+             "vct.view", "sti.view", "physio.view"
      );
 
      private final ClinicDataStore dataStore;
@@ -66,13 +67,15 @@ public class ApiController {
      private final HrDirectoryService hrDirectoryService;
      private final SisDirectoryService sisDirectoryService;
      private final AutoBillingService autoBillingService;
+     private final DepartmentAccessService departmentAccessService;
      private final ObjectMapper objectMapper = new ObjectMapper();
 
       public ApiController(ClinicDataStore dataStore, DataBackupService backupService, JwtUtil jwtUtil, JdbcTemplate jdbc,
                            com.unza.clinic.repository.PrescriptionItemRepository prescriptionItemRepository,
                            WebSocketNotificationService wsService, LoginRateLimiter rateLimiter,
                            RefreshTokenService refreshTokenService, HrDirectoryService hrDirectoryService,
-                           SisDirectoryService sisDirectoryService, AutoBillingService autoBillingService) {
+                           SisDirectoryService sisDirectoryService, AutoBillingService autoBillingService,
+                           DepartmentAccessService departmentAccessService) {
           this.dataStore = dataStore;
           this.backupService = backupService;
           this.jwtUtil = jwtUtil;
@@ -84,6 +87,7 @@ public class ApiController {
           this.hrDirectoryService = hrDirectoryService;
           this.sisDirectoryService = sisDirectoryService;
           this.autoBillingService = autoBillingService;
+          this.departmentAccessService = departmentAccessService;
       }
 
      @GetMapping("/")
@@ -242,8 +246,12 @@ public class ApiController {
 
     @GetMapping("/staff")
     public List<Map<String, Object>> getStaff(HttpServletRequest httpRequest) {
-        requirePermission(httpRequest, "staff.view");
-        return dataStore.getStaffMembers().stream().map(this::toStaffResponse).toList();
+        AppUser actor = requirePermission(httpRequest, "staff.view");
+        return dataStore.getStaffMembers().stream()
+                .filter(member -> !departmentAccessService.isDepartmentHead(actor)
+                        || departmentAccessService.isAdmin(actor)
+                        || departmentAccessService.canManageDepartment(actor, member.getDepartment()))
+                .map(this::toStaffResponse).toList();
     }
 
     /** HR System lookup — find staff by man number so registration can pre-fill details */
@@ -364,19 +372,20 @@ public class ApiController {
 
     @PostMapping("/staff")
     public Map<String, Object> createStaff(HttpServletRequest httpRequest, @Valid @RequestBody StaffCreateRequest request) {
-        requirePermission(httpRequest, "staff.manage");
+        AppUser actor = requirePermission(httpRequest, "staff.manage");
+        requireDepartmentWriteScope(actor, request.department());
         StaffMember member = new StaffMember();
         member.setStaffId("STF-" + String.format("%03d", dataStore.getStaffMembers().size() + 1));
         member.setManNumber(hasText(request.manNumber()) ? request.manNumber().trim() : "MAN-" + String.format("%03d", dataStore.getStaffMembers().size() + 1));
         member.setName(request.name());
-        member.setRole(request.role());
+        member.setRole(normalizeClinicalRole(request.role()));
         member.setDepartment(request.department());
         member.setPhone(request.phone());
         member.setEmail(request.email());
         member.setSpecialization(request.specialization());
         member.setStatus("active");
         member = dataStore.addStaffMember(member);
-        writeAuditLog("System", "create", "Added staff member " + member.getName() + " (" + member.getStaffId() + ")", "127.0.0.1");
+        writeAuditLog(actor.getName(), actor.getRole(), "create", "Added staff member " + member.getName() + " (" + member.getStaffId() + ")", "127.0.0.1");
         return Map.of("success", true, "staff_id", member.getStaffId(), "entry", toStaffResponse(member));
     }
 
@@ -387,11 +396,13 @@ public class ApiController {
         if (member == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Staff member not found");
         }
+        requireDepartmentWriteScope(actor, member.getDepartment());
+        requireDepartmentWriteScope(actor, request.department());
         member.setName(request.name());
         if (hasText(request.manNumber())) {
             member.setManNumber(request.manNumber().trim());
         }
-        member.setRole(request.role());
+        member.setRole(normalizeClinicalRole(request.role()));
         member.setDepartment(request.department());
         member.setPhone(request.phone());
         member.setEmail(request.email());
@@ -414,11 +425,12 @@ public class ApiController {
 
     @DeleteMapping("/staff/{staffId}")
     public Map<String, Object> deleteStaff(HttpServletRequest httpRequest, @PathVariable String staffId) {
-        requirePermission(httpRequest, "staff.manage");
+        AppUser actor = requirePermission(httpRequest, "staff.manage");
         StaffMember member = resolveStaffMember(staffId);
         if (member == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Staff member not found");
         }
+        requireDepartmentWriteScope(actor, member.getDepartment());
         AppUser linkedUser = dataStore.findUserByStaffId(member.getStaffId());
         if (linkedUser == null && hasText(member.getManNumber())) {
             linkedUser = dataStore.findUserByManNumber(member.getManNumber());
@@ -427,7 +439,7 @@ public class ApiController {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Delete the linked user account first before removing this staff record");
         }
         dataStore.deleteStaffMember(member);
-        writeAuditLog("System", "Admin", "delete", "Deleted staff member " + member.getName() + " (" + member.getStaffId() + ").", "127.0.0.1");
+        writeAuditLog(actor.getName(), actor.getRole(), "delete", "Deleted staff member " + member.getName() + " (" + member.getStaffId() + ").", "127.0.0.1");
         return Map.of("success", true);
     }
 
@@ -605,7 +617,10 @@ public class ApiController {
         department.setCode("DEPT-" + request.name().substring(0, Math.min(2, request.name().length())).toUpperCase(Locale.ROOT) + "-" + String.format("%02d", dataStore.getDepartments().size() + 1));
         department.setName(request.name());
         department.setHead(request.head());
-        department.setDoctors(defaultInt(request.doctors()));
+        department.setHeadUserId(stringValue(request.headUserId()).trim());
+        int clinicianCount = request.clinicians() != null ? request.clinicians() : defaultInt(request.doctors());
+        department.setClinicians(clinicianCount);
+        department.setDoctors(clinicianCount);
         department.setNurses(defaultInt(request.nurses()));
         department.setBeds(defaultInt(request.beds()));
         department.setLocation(request.location());
@@ -628,7 +643,10 @@ public class ApiController {
         }
         department.setName(request.name());
         department.setHead(request.head());
-        department.setDoctors(defaultInt(request.doctors()));
+        department.setHeadUserId(stringValue(request.headUserId()).trim());
+        int clinicianCount = request.clinicians() != null ? request.clinicians() : defaultInt(request.doctors());
+        department.setClinicians(clinicianCount);
+        department.setDoctors(clinicianCount);
         department.setNurses(defaultInt(request.nurses()));
         department.setBeds(defaultInt(request.beds()));
         department.setLocation(request.location());
@@ -647,6 +665,71 @@ public class ApiController {
         }
         dataStore.deleteDepartment(department);
         writeAuditLog("System", "Admin", "delete", "Deleted department " + department.getName() + " (" + department.getCode() + ").", "127.0.0.1");
+        return Map.of("success", true);
+    }
+
+    @GetMapping("/consultation-rooms")
+    public List<Map<String, Object>> getConsultationRooms(HttpServletRequest httpRequest,
+            @RequestParam(required = false) String department) {
+        requireAnyPermission(httpRequest, List.of("sections.view", "forms.view", "schedules.view"));
+        List<ConsultationRoom> rooms = hasText(department)
+                ? dataStore.getConsultationRoomsByDepartment(department.trim())
+                : dataStore.getConsultationRooms();
+        return rooms.stream().map(this::toConsultationRoomResponse).toList();
+    }
+
+    @PostMapping("/consultation-rooms")
+    public Map<String, Object> createConsultationRoom(HttpServletRequest httpRequest,
+            @Valid @RequestBody ConsultationRoomRequest request) {
+        AppUser actor = requireAnyPermission(httpRequest, List.of("departments.manage", "schedules.manage"));
+        requireDepartmentWriteScope(actor, request.department());
+        String roomCode = hasText(request.roomCode()) ? request.roomCode().trim().toUpperCase(Locale.ROOT)
+                : "ROOM-" + String.format("%03d", dataStore.getConsultationRooms().size() + 1);
+        if (dataStore.getConsultationRoomByCode(roomCode) != null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Consultation room code already exists");
+        }
+        ConsultationRoom room = new ConsultationRoom();
+        room.setRoomCode(roomCode);
+        room.setName(request.name().trim());
+        room.setDepartment(request.department().trim());
+        room.setLocation(stringValue(request.location()).trim());
+        room.setStatus(isBlank(request.status()) ? "active" : request.status().trim().toLowerCase(Locale.ROOT));
+        room = dataStore.saveConsultationRoom(room);
+        writeAuditLog(actor.getName(), actor.getRole(), "create", "Added consultation room " + room.getName(), "127.0.0.1");
+        return Map.of("success", true, "entry", toConsultationRoomResponse(room));
+    }
+
+    @PutMapping("/consultation-rooms/{roomCode}")
+    public Map<String, Object> updateConsultationRoom(HttpServletRequest httpRequest, @PathVariable String roomCode,
+            @Valid @RequestBody ConsultationRoomRequest request) {
+        AppUser actor = requireAnyPermission(httpRequest, List.of("departments.manage", "schedules.manage"));
+        ConsultationRoom room = dataStore.getConsultationRoomByCode(roomCode);
+        if (room == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Consultation room not found");
+        requireDepartmentWriteScope(actor, room.getDepartment());
+        requireDepartmentWriteScope(actor, request.department());
+        room.setName(request.name().trim());
+        room.setDepartment(request.department().trim());
+        room.setLocation(stringValue(request.location()).trim());
+        room.setStatus(isBlank(request.status()) ? room.getStatus() : request.status().trim().toLowerCase(Locale.ROOT));
+        room = dataStore.saveConsultationRoom(room);
+        writeAuditLog(actor.getName(), actor.getRole(), "update", "Updated consultation room " + room.getName(), "127.0.0.1");
+        return Map.of("success", true, "entry", toConsultationRoomResponse(room));
+    }
+
+    @DeleteMapping("/consultation-rooms/{roomCode}")
+    public Map<String, Object> deleteConsultationRoom(HttpServletRequest httpRequest, @PathVariable String roomCode) {
+        AppUser actor = requireAnyPermission(httpRequest, List.of("departments.manage", "schedules.manage"));
+        ConsultationRoom room = dataStore.getConsultationRoomByCode(roomCode);
+        if (room == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Consultation room not found");
+        requireDepartmentWriteScope(actor, room.getDepartment());
+        boolean assigned = dataStore.getEncounterRecords().stream()
+                .anyMatch(encounter -> !encounter.isCheckedOut()
+                        && isEqualIgnoreCase(encounter.getConsultationRoomCode(), room.getRoomCode()));
+        if (assigned) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Room is assigned to an active encounter; mark it inactive instead");
+        }
+        dataStore.deleteConsultationRoom(room);
+        writeAuditLog(actor.getName(), actor.getRole(), "delete", "Deleted consultation room " + room.getName(), "127.0.0.1");
         return Map.of("success", true);
     }
 
@@ -1221,14 +1304,25 @@ public class ApiController {
         invoice.setDueDate(stringValue(request.dueDate()));
         invoice.setPaidDate("");
         invoice.setPaymentMethod(stringValue(request.paymentMethod()));
+        EncounterRecord linkedEncounter = request.encounterId() == null
+                ? findActiveEncounterForPatient(request.patientId())
+                : dataStore.getEncounterRecord(request.encounterId());
+        if (request.encounterId() != null && linkedEncounter == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Selected encounter was not found");
+        }
+        invoice.setEncounterId(linkedEncounter == null ? null : linkedEncounter.getId());
         invoice = dataStore.addBillingInvoice(invoice);
-        updateActiveEncounterPayment(invoice.getPatientId(), "PENDING", "Billing invoice created");
+        refreshEncounterPaymentStatus(invoice, "Billing invoice created");
         return Map.of("success", true, "invoice_id", invoice.getInvoiceId(), "entry", toBillingResponse(invoice));
     }
 
     @PutMapping("/billing/{invoiceId}/status")
     public Map<String, Object> updateBillingStatus(HttpServletRequest httpRequest, @PathVariable String invoiceId, @RequestBody BillingStatusUpdateRequest request) {
-        requirePermission(httpRequest, "billing.payments");
+        AppUser actor = requirePermission(httpRequest, "billing.payments");
+        if (!canClearPaymentAtReception(actor)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Payments may only be cleared by reception, cashier, or an administrator");
+        }
         BillingInvoice invoice = dataStore.getBillingInvoiceByInvoiceId(invoiceId);
         if (invoice == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Invoice not found");
@@ -1251,12 +1345,13 @@ public class ApiController {
 
         invoice = dataStore.addBillingInvoice(invoice);
         if (isEqualIgnoreCase(nextStatus, "completed")) {
-            updateActiveEncounterPayment(invoice.getPatientId(), "CLEARED", "Payment completed");
-            AppUser actor = requireAuthenticatedUser(httpRequest);
+            refreshEncounterPaymentStatus(invoice, "Payment cleared at reception by " + actor.getName());
             routeActiveEncounter(invoice.getPatientId(), "ACCOUNTS", "CHECKOUT", actor.getName(),
                     "Payment cleared; ready for checkout");
         } else if (isEqualIgnoreCase(nextStatus, "pending")) {
-            updateActiveEncounterPayment(invoice.getPatientId(), "PENDING", "Payment pending");
+            refreshEncounterPaymentStatus(invoice, "Payment pending");
+        } else {
+            refreshEncounterPaymentStatus(invoice, "Invoice cancelled at reception");
         }
         return Map.of("success", true, "entry", toBillingResponse(invoice));
     }
@@ -1403,7 +1498,7 @@ public class ApiController {
         user.setUserId("USR-" + String.format("%03d", dataStore.getUsers().size() + 1));
         user.setName(linkedStaff != null ? linkedStaff.getName() : request.name());
         user.setEmail(request.email());
-        user.setRole(request.role());
+        user.setRole(normalizeClinicalRole(request.role()));
         user.setDepartment(linkedStaff != null && hasText(linkedStaff.getDepartment()) ? linkedStaff.getDepartment() : request.department());
         user.setStaffId(linkedStaff != null ? linkedStaff.getStaffId() : stringValue(request.staffId()));
         user.setManNumber(linkedStaff != null ? stringValue(linkedStaff.getManNumber()) : stringValue(request.manNumber()));
@@ -1467,7 +1562,7 @@ public class ApiController {
             user.setEmail(request.email().trim());
         }
         if (hasText(request.role())) {
-            user.setRole(request.role().trim());
+            user.setRole(normalizeClinicalRole(request.role()));
         }
         if (hasText(request.department())) {
             user.setDepartment(request.department().trim());
@@ -1979,21 +2074,26 @@ public class ApiController {
     @GetMapping("/staff-schedules")
     public List<Map<String, Object>> getStaffSchedules(HttpServletRequest httpRequest,
             @RequestParam(required = false) String weekOf) {
-        requirePermission(httpRequest, "schedules.view");
+        AppUser actor = requirePermission(httpRequest, "schedules.view");
         List<StaffSchedule> list = hasText(weekOf)
                 ? dataStore.getStaffSchedulesByWeek(weekOf)
                 : dataStore.getStaffSchedules();
-        return list.stream().map(this::toStaffScheduleResponse).toList();
+        return list.stream()
+                .filter(schedule -> !departmentAccessService.isDepartmentHead(actor)
+                        || departmentAccessService.isAdmin(actor)
+                        || departmentAccessService.canManageDepartment(actor, schedule.getDepartment()))
+                .map(this::toStaffScheduleResponse).toList();
     }
 
     @PostMapping("/staff-schedules")
     public Map<String, Object> createStaffSchedule(HttpServletRequest httpRequest, @Valid @RequestBody StaffScheduleCreateRequest request) {
-        requirePermission(httpRequest, "schedules.view");
+        AppUser actor = requirePermission(httpRequest, "schedules.manage");
+        requireDepartmentWriteScope(actor, request.department());
         StaffSchedule schedule = new StaffSchedule();
         schedule.setScheduleId("SCH-" + String.format("%03d", dataStore.getStaffSchedules().size() + 1));
         schedule.setStaffId(request.staffId());
         schedule.setName(request.name());
-        schedule.setRole(request.role());
+        schedule.setRole(normalizeClinicalRole(request.role()));
         schedule.setDepartment(request.department());
         schedule.setDayOfWeek(request.dayOfWeek());
         schedule.setWeekOf(request.weekOf());
@@ -2003,20 +2103,21 @@ public class ApiController {
         schedule.setLocation(hasText(request.location()) ? request.location().trim() : request.department());
         schedule.setStatus("Scheduled");
         schedule = dataStore.addStaffSchedule(schedule);
-        writeAuditLog("System", "create", "Added staff schedule for " + schedule.getName(), "127.0.0.1");
+        writeAuditLog(actor.getName(), actor.getRole(), "create", "Added staff schedule for " + schedule.getName(), "127.0.0.1");
         return Map.of("success", true, "entry", toStaffScheduleResponse(schedule));
     }
 
     @PostMapping("/staff-schedules/bulk")
     public Map<String, Object> bulkCreateStaffSchedules(HttpServletRequest httpRequest, @Valid @RequestBody StaffScheduleBulkCreateRequest request) {
-        requirePermission(httpRequest, "schedules.view");
+        AppUser actor = requirePermission(httpRequest, "schedules.manage");
+        requireDepartmentWriteScope(actor, request.department());
         List<Map<String, Object>> created = new ArrayList<>();
         for (String day : request.days()) {
             StaffSchedule schedule = new StaffSchedule();
             schedule.setScheduleId("SCH-" + String.format("%03d", dataStore.getStaffSchedules().size() + 1));
             schedule.setStaffId(request.staffId());
             schedule.setName(request.name());
-            schedule.setRole(request.role());
+            schedule.setRole(normalizeClinicalRole(request.role()));
             schedule.setDepartment(request.department());
             schedule.setDayOfWeek(day);
             schedule.setWeekOf(request.weekOf());
@@ -2028,7 +2129,7 @@ public class ApiController {
             schedule = dataStore.addStaffSchedule(schedule);
             created.add(toStaffScheduleResponse(schedule));
         }
-        writeAuditLog("System", "create", "Bulk added " + created.size() + " schedule entries for " + request.name(), "127.0.0.1");
+        writeAuditLog(actor.getName(), actor.getRole(), "create", "Bulk added " + created.size() + " schedule entries for " + request.name(), "127.0.0.1");
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
         result.put("count", created.size());
@@ -2038,11 +2139,12 @@ public class ApiController {
 
     @DeleteMapping("/staff-schedules/{id}")
     public Map<String, Object> deleteStaffSchedule(HttpServletRequest httpRequest, @PathVariable Long id) {
-        requirePermission(httpRequest, "schedules.view");
+        AppUser actor = requirePermission(httpRequest, "schedules.manage");
         StaffSchedule existing = dataStore.getStaffSchedule(id);
         if (existing == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Schedule entry not found");
+        requireDepartmentWriteScope(actor, existing.getDepartment());
         dataStore.deleteStaffSchedule(id);
-        writeAuditLog("System", "delete", "Removed schedule entry for " + existing.getName() + " on " + existing.getDayOfWeek(), "127.0.0.1");
+        writeAuditLog(actor.getName(), actor.getRole(), "delete", "Removed schedule entry for " + existing.getName() + " on " + existing.getDayOfWeek(), "127.0.0.1");
         return Map.of("success", true);
     }
 
@@ -2382,6 +2484,10 @@ public class ApiController {
         record.setPatientId(canonicalPatientId);
         record.setPatientName(resolveCanonicalPatientName(patient, request.patientName()));
         record.setPatientType(hasText(request.patientType()) ? request.patientType().trim() : "GENERAL");
+        record.setPurposeOfVisit(stringValue(request.purpose()).trim());
+        record.setServiceCode("");
+        record.setServiceName("");
+        record.setConsultationRoomCode("");
         // Every visit enters through reception. Reception then explicitly routes it.
         record.setCurrentStage(EncounterWorkflow.RECEPTION);
         record.setPaymentStatus("NOT_REQUIRED");
@@ -2403,6 +2509,9 @@ public class ApiController {
         record.setCompletedActions("Registration");
         record.setNotes(stringValue(request.notes()));
         record = dataStore.addEncounterRecord(record);
+        if (hasText(request.serviceCode())) {
+            applyReceptionService(record, patient, request.serviceCode());
+        }
         writeAuditLog(record.getCreatedBy(), "create", "Opened encounter " + record.getEncounterId() + " for " + record.getPatientName(), "127.0.0.1");
         Map<String, Object> response = toEncounterResponse(record);
         wsService.broadcastQueueUpdate(record.getCurrentStage(), response);
@@ -2427,6 +2536,13 @@ public class ApiController {
         String performedBy = resolveActorName(actor, request.performedBy(), "Clinic User");
         String note = hasText(request.note()) ? request.note().trim() : "Stage updated";
 
+        if (request.purpose() != null) {
+            record.setPurposeOfVisit(request.purpose().trim());
+        }
+        if (hasText(request.serviceCode())) {
+            applyReceptionService(record, resolvePatient(record.getPatientId()), request.serviceCode());
+        }
+
         boolean claimedByAnother = hasText(record.getAssignedTo())
                 && !isEqualIgnoreCase(record.getAssignedTo(), performedBy)
                 && !isEqualIgnoreCase(actor.getRole(), "Admin");
@@ -2442,10 +2558,26 @@ public class ApiController {
         }
 
         boolean stageChanged = !stage.equals(currentStage);
+        if (stageChanged && EncounterWorkflow.RECEPTION.equals(currentStage)
+                && requiresReceptionPaymentClearance(stage)) {
+            if (!hasText(record.getServiceCode())) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Select the requested service at reception before sending the patient to " + stage);
+            }
+            if (hasPendingInvoiceForEncounter(record)) {
+                record.setPaymentStatus("PENDING");
+                record.setUpdatedAt(LocalDateTime.now().toString());
+                dataStore.updateEncounterRecord(record);
+                throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED,
+                        "Payment for " + record.getServiceName() + " must be cleared at reception before service starts");
+            }
+            record.setPaymentStatus("CLEARED");
+        }
         if (stageChanged) {
             applyStageTaskTransition(record, currentStage, stage);
             record.setQueueStatus("WAITING");
             record.setAssignedTo("");
+            if (!"CONSULTATION".equals(stage)) record.setConsultationRoomCode("");
             record.setDepartmentEnteredAt(LocalDateTime.now().toString());
         }
         record.setCurrentStage(stage);
@@ -2455,6 +2587,9 @@ public class ApiController {
         if (request.completedActions() != null) record.setCompletedActions(request.completedActions().trim());
         if (request.paymentStatus() != null) record.setPaymentStatus(request.paymentStatus().trim().toUpperCase(Locale.ROOT));
         if (hasText(request.priority())) record.setPriority(normalizePriority(request.priority()));
+        if (request.consultationRoomCode() != null) {
+            record.setConsultationRoomCode(resolveConsultationRoomCode(stage, request.consultationRoomCode()));
+        }
         if (request.checkoutEligible() != null) {
             record.setCheckoutEligible(request.checkoutEligible());
         } else if (EncounterWorkflow.CHECKOUT.equals(stage)) {
@@ -2487,6 +2622,12 @@ public class ApiController {
         String status = hasText(request.status()) ? normalizeQueueStatus(request.status()) : defaultQueueStatus(record);
         String performedBy = resolveActorName(actor, request.performedBy(), "Clinic User");
         String note = hasText(request.note()) ? request.note().trim() : queueStatusNote(status);
+
+        if ("IN_PROGRESS".equals(status) && requiresReceptionPaymentClearance(record.getCurrentStage())
+                && "PENDING".equalsIgnoreCase(record.getPaymentStatus())) {
+            throw new ResponseStatusException(HttpStatus.PAYMENT_REQUIRED,
+                    "This service cannot start until payment is cleared at reception");
+        }
 
         boolean claimedByAnother = hasText(record.getAssignedTo())
                 && !isEqualIgnoreCase(record.getAssignedTo(), performedBy)
@@ -2573,13 +2714,18 @@ public class ApiController {
     @PutMapping("/encounters/{id}/assignment")
     public Map<String, Object> assignEncounter(HttpServletRequest httpRequest, @PathVariable Long id,
                                                 @RequestBody EncounterAssignmentRequest request) {
-        AppUser actor = requirePermission(httpRequest, "users.manage");
+        AppUser actor = requireAnyPermission(httpRequest, ENCOUNTER_ACCESS_PERMISSIONS);
         EncounterRecord record = dataStore.getEncounterRecord(id);
         if (record == null) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Encounter not found");
         }
         if (record.isCheckedOut()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Ended encounters cannot be reassigned");
+        }
+        if (!userHasPermission(actor, "users.manage")
+                && !departmentAccessService.canManageStage(actor, record.getCurrentStage())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Only an administrator or this section's department head can assign its queue");
         }
 
         String requestedAssignee = stringValue(request.assignedTo()).trim();
@@ -2607,6 +2753,9 @@ public class ApiController {
         String note = hasText(request.note()) ? request.note().trim()
                 : (assignee.isBlank() ? "Queue assignment cleared" : "Assigned to " + assignee);
         record.setAssignedTo(assignee);
+        if (request.consultationRoomCode() != null) {
+            record.setConsultationRoomCode(resolveConsultationRoomCode(record.getCurrentStage(), request.consultationRoomCode()));
+        }
         record.setQueueStatus(status);
         record.setUpdatedAt(LocalDateTime.now().toString());
         record.setStageHistory(appendHistory(record.getStageHistory(), LocalDateTime.now() + "|"
@@ -2645,6 +2794,7 @@ public class ApiController {
         record.setCurrentStage("CHECKOUT");
         record.setQueueStatus("CLOSED");
         record.setAssignedTo("");
+        record.setConsultationRoomCode("");
         record.setVisitOutcome("COMPLETED");
         record.setCheckoutTime(LocalDateTime.now().toString());
         record.setEndedAt(record.getCheckoutTime());
@@ -2945,7 +3095,7 @@ public class ApiController {
                         user.getUserId(),
                         user.getName(),
                         user.getEmail(),
-                        user.getRole(),
+                        normalizeClinicalRole(user.getRole()),
                         user.getDepartment(),
                         stringValue(user.getStaffId()),
                         stringValue(user.getManNumber()),
@@ -3002,11 +3152,38 @@ public class ApiController {
     }
 
     private Map<String, Object> toStaffResponse(StaffMember staffMember) {
-        return Map.of("id", staffMember.getId(), "staff_id", staffMember.getStaffId(), "man_number", stringValue(staffMember.getManNumber()), "name", staffMember.getName(), "role", staffMember.getRole(), "department", staffMember.getDepartment(), "phone", staffMember.getPhone(), "email", stringValue(staffMember.getEmail()), "specialization", staffMember.getSpecialization(), "status", staffMember.getStatus());
+        return Map.of("id", staffMember.getId(), "staff_id", staffMember.getStaffId(), "man_number", stringValue(staffMember.getManNumber()), "name", staffMember.getName(), "role", normalizeClinicalRole(staffMember.getRole()), "department", staffMember.getDepartment(), "phone", staffMember.getPhone(), "email", stringValue(staffMember.getEmail()), "specialization", staffMember.getSpecialization(), "status", staffMember.getStatus());
     }
 
     private Map<String, Object> toDepartmentResponse(Department department) {
-        return Map.of("id", department.getId(), "code", department.getCode(), "name", department.getName(), "head", department.getHead(), "doctors", department.getDoctors(), "nurses", department.getNurses(), "beds", department.getBeds(), "location", department.getLocation(), "phone", department.getPhone(), "status", department.getStatus());
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("id", department.getId());
+        response.put("code", department.getCode());
+        response.put("name", department.getName());
+        response.put("head", department.getHead());
+        response.put("head_user_id", stringValue(department.getHeadUserId()));
+        response.put("clinicians", defaultInt(department.getClinicians()));
+        response.put("nurses", defaultInt(department.getNurses()));
+        response.put("beds", defaultInt(department.getBeds()));
+        response.put("location", stringValue(department.getLocation()));
+        response.put("phone", stringValue(department.getPhone()));
+        response.put("status", stringValue(department.getStatus()));
+        return response;
+    }
+
+    private Map<String, Object> toConsultationRoomResponse(ConsultationRoom room) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("id", room.getId());
+        response.put("room_code", room.getRoomCode());
+        response.put("name", room.getName());
+        response.put("department", room.getDepartment());
+        response.put("location", stringValue(room.getLocation()));
+        response.put("status", room.getStatus());
+        response.put("active_encounters", dataStore.getEncounterRecords().stream()
+                .filter(encounter -> !encounter.isCheckedOut())
+                .filter(encounter -> isEqualIgnoreCase(encounter.getConsultationRoomCode(), room.getRoomCode()))
+                .count());
+        return response;
     }
 
     private Map<String, Object> toAppointmentResponse(Appointment appointment) {
@@ -3215,7 +3392,7 @@ public class ApiController {
         response.put("user_id", user.getUserId());
         response.put("name", user.getName());
         response.put("email", user.getEmail());
-        response.put("role", user.getRole());
+        response.put("role", normalizeClinicalRole(user.getRole()));
         response.put("department", user.getDepartment());
         response.put("staff_id", stringValue(user.getStaffId()));
         response.put("man_number", stringValue(user.getManNumber()));
@@ -3223,6 +3400,9 @@ public class ApiController {
         response.put("last_login", stringValue(user.getLastLogin()));
         response.put("force_password_change", Boolean.TRUE.equals(user.getForcePasswordChange()));
         response.put("permissions", parseUserPermissions(user));
+        response.put("is_department_head", departmentAccessService.isDepartmentHead(user));
+        Department headed = departmentAccessService.headedDepartment(user);
+        response.put("managed_department", headed == null ? "" : headed.getName());
         response.put("password_changed_at", stringValue(user.getPasswordChangedAt()));
         response.put("password_version", user.getPasswordVersion() == null ? 1 : user.getPasswordVersion());
         return response;
@@ -4212,10 +4392,84 @@ public class ApiController {
         wsService.broadcastQueueUpdate(encounter.getCurrentStage(), toEncounterResponse(encounter));
     }
 
-    private static final String CONSULT_FEE_TARIFF_CODE = "CONSULT-FEE";
+    private void refreshEncounterPaymentStatus(BillingInvoice invoice, String note) {
+        EncounterRecord encounter = invoice.getEncounterId() == null
+                ? findActiveEncounterForPatient(invoice.getPatientId())
+                : dataStore.getEncounterRecord(invoice.getEncounterId());
+        if (encounter == null) return;
+        List<BillingInvoice> encounterInvoices = dataStore.getBillingInvoices().stream()
+                .filter(candidate -> Objects.equals(candidate.getEncounterId(), encounter.getId())
+                        || (candidate.getId().equals(invoice.getId()) && candidate.getEncounterId() == null))
+                .filter(candidate -> !isEqualIgnoreCase(candidate.getStatus(), "cancelled"))
+                .toList();
+        boolean pending = encounterInvoices.stream().anyMatch(candidate -> isEqualIgnoreCase(candidate.getStatus(), "pending"));
+        String status = pending ? "PENDING" : (encounterInvoices.isEmpty() ? "NOT_REQUIRED" : "CLEARED");
+        updateActiveEncounterPayment(encounter.getPatientId(), status, note);
+    }
+
+    private boolean hasPendingInvoiceForEncounter(EncounterRecord encounter) {
+        return encounter != null && dataStore.getBillingInvoices().stream()
+                .filter(invoice -> Objects.equals(invoice.getEncounterId(), encounter.getId()))
+                .anyMatch(invoice -> isEqualIgnoreCase(invoice.getStatus(), "pending"));
+    }
+
+    private void applyReceptionService(EncounterRecord encounter, Patient patient, String serviceCode) {
+        String normalizedCode = stringValue(serviceCode).trim();
+        ServiceTariff tariff = dataStore.getServiceTariffByCode(normalizedCode);
+        if (tariff == null || isEqualIgnoreCase(tariff.getStatus(), "inactive")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Select an active clinic service from the reception tariff list");
+        }
+        encounter.setServiceCode(tariff.getTariffCode());
+        encounter.setServiceName(tariff.getServiceName());
+        AutoBillingService.AutoBillingResult result = autoBillingService.postCharge(
+                encounter, patient, tariff.getTariffCode(), 1, "Reception service selection", true);
+        encounter.setPaymentStatus(result.exempt() || !hasPendingInvoiceForEncounter(encounter) ? "CLEARED" : "PENDING");
+        if ("PENDING".equals(encounter.getPaymentStatus())) encounter.setCheckoutEligible(false);
+        encounter.setUpdatedAt(LocalDateTime.now().toString());
+        dataStore.updateEncounterRecord(encounter);
+    }
+
+    private boolean requiresReceptionPaymentClearance(String stageValue) {
+        String stage = normalizeStage(stageValue);
+        return !List.of("RECEPTION", "TRIAGE", "EMERGENCY", "ACCOUNTS", "CHECKOUT").contains(stage);
+    }
+
+    private boolean canClearPaymentAtReception(AppUser actor) {
+        return departmentAccessService.isAdmin(actor)
+                || isEqualIgnoreCase(actor.getRole(), "Receptionist")
+                || isEqualIgnoreCase(actor.getRole(), "Cashier")
+                || departmentAccessService.canManageStage(actor, "RECEPTION")
+                || departmentAccessService.canManageStage(actor, "ACCOUNTS");
+    }
+
+    private String resolveConsultationRoomCode(String stageValue, String submittedCode) {
+        String roomCode = stringValue(submittedCode).trim();
+        if (roomCode.isBlank()) return "";
+        if (!isEqualIgnoreCase(stageValue, "CONSULTATION")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Consultation rooms can only be assigned in the consultation section");
+        }
+        ConsultationRoom room = dataStore.getConsultationRoomByCode(roomCode);
+        if (room == null || !isEqualIgnoreCase(room.getStatus(), "active")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select an active consultation room");
+        }
+        boolean occupied = dataStore.getEncounterRecords().stream()
+                .filter(encounter -> !encounter.isCheckedOut())
+                .filter(encounter -> isEqualIgnoreCase(defaultQueueStatus(encounter), "IN_PROGRESS"))
+                .anyMatch(encounter -> isEqualIgnoreCase(encounter.getConsultationRoomCode(), room.getRoomCode()));
+        if (occupied) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    room.getName() + " is already occupied by an active consultation");
+        }
+        return room.getRoomCode();
+    }
+
+    private static final String CONSULT_FEE_TARIFF_CODE = "OPD-001";
 
     private void maybeChargeConsultationFee(EncounterRecord encounter) {
-        if (encounter == null || !"CONSULTATION".equalsIgnoreCase(encounter.getCurrentStage())) {
+        if (encounter == null || !"CONSULTATION".equalsIgnoreCase(encounter.getCurrentStage())
+                || hasText(encounter.getServiceCode())) {
             return;
         }
         Patient patient = resolvePatient(encounter.getPatientId());
@@ -4816,14 +5070,29 @@ public class ApiController {
 
     private List<String> parseUserPermissions(AppUser user) {
         String raw = stringValue(user.getPermissionsJson());
+        List<String> basePermissions;
         if (isBlank(raw)) {
-            return defaultPermissionsForRole(user.getRole());
+            basePermissions = defaultPermissionsForRole(user.getRole());
+        } else {
+            try {
+                basePermissions = objectMapper.readValue(raw, new TypeReference<List<String>>() {});
+            } catch (Exception ex) {
+                basePermissions = defaultPermissionsForRole(user.getRole());
+            }
         }
-        try {
-            return objectMapper.readValue(raw, new TypeReference<List<String>>() {});
-        } catch (Exception ex) {
-            return defaultPermissionsForRole(user.getRole());
+        return departmentAccessService.expandPermissions(user, basePermissions);
+    }
+
+    private void requireDepartmentWriteScope(AppUser actor, String department) {
+        if (departmentAccessService.isAdmin(actor)) return;
+        if (!departmentAccessService.canManageDepartment(actor, department)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Department heads can manage records only within their assigned section");
         }
+    }
+
+    private String normalizeClinicalRole(String role) {
+        return isEqualIgnoreCase(role, "Doctor") ? "Clinician" : stringValue(role).trim();
     }
 
     private List<String> defaultPermissionsForRole(String role) {
@@ -4954,13 +5223,14 @@ public class ApiController {
         userPayload.put("user_id", user.getUserId());
         userPayload.put("name", user.getName());
         userPayload.put("email", user.getEmail());
-        userPayload.put("role", user.getRole());
+        userPayload.put("role", normalizeClinicalRole(user.getRole()));
         userPayload.put("department", user.getDepartment());
         userPayload.put("staff_id", stringValue(user.getStaffId()));
         userPayload.put("man_number", stringValue(user.getManNumber()));
         userPayload.put("status", user.getStatus());
         userPayload.put("force_password_change", false);
         userPayload.put("permissions", parseUserPermissions(user));
+        userPayload.put("is_department_head", departmentAccessService.isDepartmentHead(user));
         userPayload.put("password_changed_at", user.getPasswordChangedAt());
         userPayload.put("password_version", user.getPasswordVersion());
 

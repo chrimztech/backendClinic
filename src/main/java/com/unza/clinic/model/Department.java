@@ -15,6 +15,8 @@ public class Department {
     private String code;
     private String name;
     private String head;
+    private String headUserId;
+    private Integer clinicians;
     private Integer doctors;
     private Integer nurses;
     private Integer beds;
@@ -32,7 +34,15 @@ public class Department {
     public void setName(String name) { this.name = name; }
     public String getHead() { return head; }
     public void setHead(String head) { this.head = head; }
+    public String getHeadUserId() { return headUserId; }
+    public void setHeadUserId(String headUserId) { this.headUserId = headUserId; }
+    public Integer getClinicians() { return clinicians != null ? clinicians : doctors; }
+    public void setClinicians(Integer clinicians) { this.clinicians = clinicians; }
+    /** @deprecated retained only for databases and clients created before the clinician terminology change. */
+    @Deprecated
     public Integer getDoctors() { return doctors; }
+    /** @deprecated use {@link #setClinicians(Integer)}. */
+    @Deprecated
     public void setDoctors(Integer doctors) { this.doctors = doctors; }
     public Integer getNurses() { return nurses; }
     public void setNurses(Integer nurses) { this.nurses = nurses; }

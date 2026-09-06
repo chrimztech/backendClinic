@@ -21,6 +21,14 @@ public class EncounterRecord {
     private String patientId;
     private String patientName;
     private String patientType;
+    @Column(name = "purpose_of_visit", length = 2000)
+    private String purposeOfVisit;
+    @Column(name = "service_code", length = 80)
+    private String serviceCode;
+    @Column(name = "service_name", length = 255)
+    private String serviceName;
+    @Column(name = "consultation_room_code", length = 80)
+    private String consultationRoomCode;
     private String currentStage;
     private String paymentStatus;
     private boolean checkoutEligible;
@@ -70,6 +78,14 @@ public class EncounterRecord {
     public void setPatientName(String patientName) { this.patientName = patientName; }
     public String getPatientType() { return patientType; }
     public void setPatientType(String patientType) { this.patientType = patientType; }
+    public String getPurposeOfVisit() { return purposeOfVisit; }
+    public void setPurposeOfVisit(String purposeOfVisit) { this.purposeOfVisit = purposeOfVisit; }
+    public String getServiceCode() { return serviceCode; }
+    public void setServiceCode(String serviceCode) { this.serviceCode = serviceCode; }
+    public String getServiceName() { return serviceName; }
+    public void setServiceName(String serviceName) { this.serviceName = serviceName; }
+    public String getConsultationRoomCode() { return consultationRoomCode; }
+    public void setConsultationRoomCode(String consultationRoomCode) { this.consultationRoomCode = consultationRoomCode; }
     public String getCurrentStage() { return currentStage; }
     public void setCurrentStage(String currentStage) { this.currentStage = currentStage; }
     public String getPaymentStatus() { return paymentStatus; }

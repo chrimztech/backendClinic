@@ -37,6 +37,7 @@ public class ClinicTableInitializer {
     public void initTables() {
         createMchTables();
         createArtTables();
+        createVctTables();
         createDentalTable();
         createEyeTable();
         createStiTable();
@@ -81,6 +82,9 @@ public class ClinicTableInitializer {
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """);
+
+        run("ALTER TABLE mch_antenatal_visits ADD COLUMN IF NOT EXISTS art_number VARCHAR(100)");
+        run("ALTER TABLE mch_antenatal_visits ADD COLUMN IF NOT EXISTS vct_test_id VARCHAR(80)");
 
         run("""
             CREATE TABLE IF NOT EXISTS mch_immunization_visits (
@@ -186,6 +190,36 @@ public class ClinicTableInitializer {
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """);
+    }
+
+    // VCT / HIV Testing Services, linked to ART enrolment by ART number.
+    private void createVctTables() {
+        run("""
+            CREATE TABLE IF NOT EXISTS vct_records (
+                id BIGSERIAL PRIMARY KEY,
+                test_id VARCHAR(80) UNIQUE NOT NULL,
+                patient_id VARCHAR(50) NOT NULL,
+                patient_name VARCHAR(200) NOT NULL,
+                test_date VARCHAR(20),
+                purpose_of_visit TEXT,
+                consent_given BOOLEAN NOT NULL DEFAULT FALSE,
+                pre_test_counseling BOOLEAN NOT NULL DEFAULT TRUE,
+                test_type VARCHAR(100),
+                result VARCHAR(30) NOT NULL,
+                post_test_counseling BOOLEAN NOT NULL DEFAULT TRUE,
+                tested_by VARCHAR(120),
+                referred_to_art BOOLEAN NOT NULL DEFAULT FALSE,
+                art_number VARCHAR(100),
+                linked_at TIMESTAMP,
+                notes TEXT,
+                status VARCHAR(30) NOT NULL DEFAULT 'completed',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """);
+        run("CREATE INDEX IF NOT EXISTS idx_vct_patient_id ON vct_records (patient_id)");
+        run("CREATE INDEX IF NOT EXISTS idx_vct_result ON vct_records (result)");
+        run("CREATE INDEX IF NOT EXISTS idx_vct_art_number ON vct_records (art_number)");
     }
 
     // ─── Dental ─────────────────────────────────────────────────────────────

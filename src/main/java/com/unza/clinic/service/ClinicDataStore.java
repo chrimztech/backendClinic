@@ -43,6 +43,7 @@ public class ClinicDataStore {
     private final SystemSettingsRepository settingsRepo;
     private final EncounterRepository encounterRepo;
     private final ServiceTariffRepository serviceTariffRepo;
+    private final ConsultationRoomRepository consultationRoomRepo;
     private final PasswordEncoder passwordEncoder;
 
     // Enhanced feature repositories
@@ -69,7 +70,8 @@ public class ClinicDataStore {
             AttendanceRepository attendanceRepo, StaffScheduleRepository staffScheduleRepo,
             ClinicalFormRecordRepository clinicalFormRepo, WardStatusRepository wardRepo,
             SystemSettingsRepository settingsRepo, EncounterRepository encounterRepo,
-            ServiceTariffRepository serviceTariffRepo, PasswordEncoder passwordEncoder,
+            ServiceTariffRepository serviceTariffRepo, ConsultationRoomRepository consultationRoomRepo,
+            PasswordEncoder passwordEncoder,
             PatientDocumentRepository patientDocumentRepo, DrugInteractionRepository drugInteractionRepo,
             LabReferenceRangeRepository labReferenceRangeRepo, RefreshTokenRepository refreshTokenRepo,
             VitalAlertRepository vitalAlertRepo, ControlledDrugRegisterRepository controlledDrugRegisterRepo,
@@ -103,6 +105,7 @@ public class ClinicDataStore {
         this.settingsRepo = settingsRepo;
         this.encounterRepo = encounterRepo;
         this.serviceTariffRepo = serviceTariffRepo;
+        this.consultationRoomRepo = consultationRoomRepo;
         this.passwordEncoder = passwordEncoder;
         this.patientDocumentRepo = patientDocumentRepo;
         this.drugInteractionRepo = drugInteractionRepo;
@@ -114,6 +117,7 @@ public class ClinicDataStore {
 
         ensureSettings();
         ensureTariffs();
+        ensureConsultationRooms();
     }
 
     public List<Patient> getPatients() { return patientRepo.findAll(); }
@@ -140,6 +144,16 @@ public class ClinicDataStore {
                 .findFirst()
                 .orElse(null);
     }
+
+    public List<ConsultationRoom> getConsultationRooms() { return consultationRoomRepo.findAll(); }
+    public List<ConsultationRoom> getConsultationRoomsByDepartment(String department) {
+        return consultationRoomRepo.findByDepartmentIgnoreCaseOrderByName(department);
+    }
+    public ConsultationRoom getConsultationRoomByCode(String roomCode) {
+        return consultationRoomRepo.findByRoomCodeIgnoreCase(roomCode).orElse(null);
+    }
+    public ConsultationRoom saveConsultationRoom(ConsultationRoom room) { return consultationRoomRepo.save(room); }
+    public void deleteConsultationRoom(ConsultationRoom room) { consultationRoomRepo.delete(room); }
 
     public List<Appointment> getAppointments() { return appointmentRepo.findAll(); }
     public Appointment addAppointment(Appointment apt) { return appointmentRepo.save(apt); }
@@ -647,6 +661,25 @@ public class ClinicDataStore {
         addTariff("EYE-008", "Eye Clinic", "Glasses", "Reader v/s", "per item", 100);
         addTariff("EYE-009", "Eye Clinic", "Glasses", "Reader v/s bifocal", "per item", 150);
         addTariff("EYE-010", "Eye Clinic", "Glasses", "Old stock", "per item", 150);
+    }
+
+    private void ensureConsultationRooms() {
+        if (consultationRoomRepo.count() > 0) {
+            return;
+        }
+        addConsultationRoom("CONSULT-01", "Consultation Room 1", "Consultation", "OPD Block");
+        addConsultationRoom("CONSULT-02", "Consultation Room 2", "Consultation", "OPD Block");
+        addConsultationRoom("CONSULT-03", "Consultation Room 3", "Consultation", "OPD Block");
+    }
+
+    private void addConsultationRoom(String roomCode, String name, String department, String location) {
+        ConsultationRoom room = new ConsultationRoom();
+        room.setRoomCode(roomCode);
+        room.setName(name);
+        room.setDepartment(department);
+        room.setLocation(location);
+        room.setStatus("active");
+        consultationRoomRepo.save(room);
     }
 
     private void addTariff(String tariffCode, String department, String category, String serviceName, String unitLabel, double price) {

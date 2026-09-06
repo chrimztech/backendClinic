@@ -56,12 +56,20 @@ public class AutoBillingService {
         double unitPrice = exempt ? 0d : orZero(tariff.getPrice());
         double lineTotal = qty * unitPrice;
 
+        if (dedupe) {
+            BillingInvoice alreadyPosted = dataStore.getBillingInvoices().stream()
+                    .filter(inv -> Objects.equals(inv.getEncounterId(), encounter.getId()))
+                    .filter(inv -> !"cancelled".equalsIgnoreCase(inv.getStatus()))
+                    .filter(inv -> parseLineItems(inv.getLineItemsJson()).stream()
+                            .anyMatch(item -> tariffCode.equalsIgnoreCase(String.valueOf(item.get("tariff_code")))))
+                    .findFirst().orElse(null);
+            if (alreadyPosted != null) {
+                return new AutoBillingResult(false, exempt, 0d, alreadyPosted.getInvoiceId(), payer);
+            }
+        }
+
         BillingInvoice invoice = findOrCreateOpenInvoice(encounter);
         List<Map<String, Object>> lineItems = parseLineItems(invoice.getLineItemsJson());
-
-        if (dedupe && lineItems.stream().anyMatch(item -> tariffCode.equalsIgnoreCase(String.valueOf(item.get("tariff_code"))))) {
-            return new AutoBillingResult(false, exempt, 0d, invoice.getInvoiceId(), payer);
-        }
 
         Map<String, Object> line = new LinkedHashMap<>();
         line.put("tariff_code", tariff.getTariffCode());
@@ -81,6 +89,11 @@ public class AutoBillingService {
         invoice.setTotal(subtotal + orZero(invoice.getTax()));
         if ((invoice.getPaymentMethod() == null || invoice.getPaymentMethod().isBlank())) {
             invoice.setPaymentMethod(payer);
+        }
+        if (invoice.getTotal() <= 0d) {
+            invoice.setStatus("completed");
+            invoice.setPaidDate(LocalDateTime.now().toLocalDate().toString());
+            invoice.setPaymentMethod("Exempt");
         }
         invoice = dataStore.addBillingInvoice(invoice);
 
