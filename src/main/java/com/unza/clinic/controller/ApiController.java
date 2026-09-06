@@ -791,8 +791,8 @@ public class ApiController {
         appointment.setAppointmentId("APT-" + LocalDateTime.now().getYear() + String.format("%05d", dataStore.getAppointments().size() + 1));
         appointment.setPatientId(resolveCanonicalPatientId(request.patientId()));
         appointment.setPatientName(resolveCanonicalPatientName(linkedPatient, request.patientName()));
-        appointment.setDoctorId(request.doctorId());
-        appointment.setDoctorName(request.doctorName());
+        appointment.setDoctorId(request.clinicianId());
+        appointment.setDoctorName(request.clinicianName());
         appointment.setDepartment(request.department());
         appointment.setDate(request.date());
         appointment.setTime(request.time());
@@ -810,8 +810,8 @@ public class ApiController {
         if (isEqualIgnoreCase(appointment.getStatus(), "cancelled")) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Cannot reschedule a cancelled appointment");
         }
-        appointment.setDoctorId(request.doctorId());
-        appointment.setDoctorName(request.doctorName());
+        appointment.setDoctorId(request.clinicianId());
+        appointment.setDoctorName(request.clinicianName());
         appointment.setDepartment(request.department());
         appointment.setDate(request.date());
         appointment.setTime(request.time());
@@ -868,7 +868,7 @@ public class ApiController {
         prescription.setPatientId(resolveCanonicalPatientId(request.patientId()));
         prescription.setPatientName(resolveCanonicalPatientName(linkedPatient, request.patientName()));
         prescription.setPatientIdNum(resolveCanonicalPatientId(firstNonBlank(request.patientIdNum(), request.patientId()).toString()));
-        prescription.setDoctor(resolveActorName(actor, request.doctor(), "Current Doctor"));
+        prescription.setDoctor(resolveActorName(actor, request.clinician(), "Current Clinician"));
         prescription.setDate(LocalDate.now().toString());
         prescription.setItems(itemsSummary);
         prescription.setDrugName(stringValue(first.drugName()));
@@ -997,7 +997,7 @@ public class ApiController {
         admission.setPatientName(resolveCanonicalPatientName(linkedPatient, request.patientName()));
         admission.setWard(request.ward());
         admission.setBed(request.bed());
-        admission.setDoctor(request.doctor());
+        admission.setDoctor(request.clinician());
         admission.setAdmittedOn(request.admittedOn());
         admission.setDiagnosis(request.diagnosis());
         admission.setStatus(request.ward().toLowerCase(Locale.ROOT).contains("icu") ? "critical" : "active");
@@ -1081,7 +1081,7 @@ public class ApiController {
         labTest.setSection(stringValue(request.section()));
         labTest.setSampleType(stringValue(request.sampleType()));
         labTest.setClinicalNotes(stringValue(request.clinicalNotes()));
-        labTest.setRequestedBy(resolveActorName(actor, request.requestedBy(), "Current Doctor"));
+        labTest.setRequestedBy(resolveActorName(actor, request.requestedBy(), "Current Clinician"));
         labTest.setDate(LocalDate.now().toString());
         labTest.setStatus("pending");
         labTest.setResults("");
@@ -1821,7 +1821,7 @@ public class ApiController {
         record.setPatientId(resolveCanonicalPatientId(request.patientId()));
         record.setPatientName(resolveCanonicalPatientName(linkedPatient, request.patientName()));
         record.setLevel(request.level());
-        record.setChiefComplaint(request.chiefComplaint());
+        record.setChiefComplaint(request.purpose());
         record.setBloodPressure(request.bloodPressure());
         record.setTemperature(request.temperature());
         record.setPulseRate(request.pulseRate());
@@ -1903,10 +1903,10 @@ public class ApiController {
         record.setAge(request.age());
         record.setGender(request.gender());
         record.setSeverity(request.severity());
-        record.setChiefComplaint(request.chiefComplaint());
+        record.setChiefComplaint(request.purpose());
         record.setArrivalMode(request.arrivalMode());
         record.setArrivalTime(LocalDateTime.now().toLocalTime().withSecond(0).withNano(0).toString());
-        record.setAttendingDoctor(request.attendingDoctor());
+        record.setAttendingDoctor(request.attendingClinician());
         record.setNurseOnDuty(request.nurseOnDuty());
         record.setVitals(request.vitals());
         record.setStatus("active");
@@ -3192,8 +3192,8 @@ public class ApiController {
         response.put("appointment_id", appointment.getAppointmentId());
         response.put("patient_id", appointment.getPatientId());
         response.put("patient_name", appointment.getPatientName());
-        response.put("doctor_id", stringValue(appointment.getDoctorId()));
-        response.put("doctor_name", appointment.getDoctorName());
+        response.put("clinician_id", stringValue(appointment.getDoctorId()));
+        response.put("clinician_name", appointment.getDoctorName());
         response.put("department", appointment.getDepartment());
         response.put("date", appointment.getDate());
         response.put("time", appointment.getTime());
@@ -3210,7 +3210,7 @@ public class ApiController {
         response.put("patient_id", prescription.getPatientId());
         response.put("patient_name", prescription.getPatientName());
         response.put("patient_id_num", stringValue(prescription.getPatientIdNum()));
-        response.put("doctor", prescription.getDoctor());
+        response.put("clinician", prescription.getDoctor());
         response.put("date", prescription.getDate());
         response.put("items", prescription.getItems());
         response.put("drug_name", stringValue(prescription.getDrugName()));
@@ -3253,7 +3253,7 @@ public class ApiController {
         response.put("patient_name", admission.getPatientName());
         response.put("ward", admission.getWard());
         response.put("bed", admission.getBed());
-        response.put("doctor", admission.getDoctor());
+        response.put("clinician", admission.getDoctor());
         response.put("admitted_on", admission.getAdmittedOn());
         response.put("diagnosis", admission.getDiagnosis());
         response.put("status", admission.getStatus());
@@ -3434,6 +3434,10 @@ public class ApiController {
         response.put("patient_id", record.getPatientId());
         response.put("patient_name", record.getPatientName());
         response.put("patient_type", stringValue(record.getPatientType()));
+        response.put("purpose", stringValue(record.getPurposeOfVisit()));
+        response.put("service_code", stringValue(record.getServiceCode()));
+        response.put("service_name", stringValue(record.getServiceName()));
+        response.put("consultation_room_code", stringValue(record.getConsultationRoomCode()));
         response.put("current_stage", stringValue(record.getCurrentStage()));
         response.put("payment_status", stringValue(record.getPaymentStatus()));
         response.put("checkout_eligible", record.isCheckoutEligible());
@@ -3529,7 +3533,7 @@ public class ApiController {
         response.put("patient_id", record.getPatientId());
         response.put("patient_name", record.getPatientName());
         response.put("level", record.getLevel());
-        response.put("chief_complaint", record.getChiefComplaint());
+        response.put("purpose", record.getChiefComplaint());
         response.put("vital_signs", stringValue(record.getVitalSigns()));
         response.put("blood_pressure", stringValue(record.getBloodPressure()));
         response.put("temperature", record.getTemperature());
@@ -3561,10 +3565,10 @@ public class ApiController {
         response.put("age", record.getAge());
         response.put("gender", record.getGender());
         response.put("severity", record.getSeverity());
-        response.put("chief_complaint", record.getChiefComplaint());
+        response.put("purpose", record.getChiefComplaint());
         response.put("arrival_mode", record.getArrivalMode());
         response.put("arrival_time", record.getArrivalTime());
-        response.put("attending_doctor", record.getAttendingDoctor());
+        response.put("attending_clinician", record.getAttendingDoctor());
         response.put("nurse_on_duty", record.getNurseOnDuty());
         response.put("vitals", record.getVitals());
         response.put("status", record.getStatus());
@@ -3818,7 +3822,7 @@ public class ApiController {
                     bedEntry.put("patient_name", assignedAdmission != null ? stringValue(assignedAdmission.getPatientName()) : "");
                     bedEntry.put("patient_id", assignedAdmission != null ? stringValue(assignedAdmission.getPatientId()) : "");
                     bedEntry.put("admission_id", assignedAdmission != null ? stringValue(assignedAdmission.getAdmissionId()) : "");
-                    bedEntry.put("doctor", assignedAdmission != null ? stringValue(assignedAdmission.getDoctor()) : "");
+                    bedEntry.put("clinician", assignedAdmission != null ? stringValue(assignedAdmission.getDoctor()) : "");
                     bedEntry.put("diagnosis", assignedAdmission != null ? stringValue(assignedAdmission.getDiagnosis()) : "");
                     return bedEntry;
                 })
@@ -3913,13 +3917,14 @@ public class ApiController {
         List<Map<String, Object>> summaries = new ArrayList<>();
         summaries.add(buildSectionSummary("reception", "Reception & Walk-In", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "RECEPTION")).count(), encounters.stream().filter(encounter -> isSameDay(encounter.getCreatedAt(), LocalDate.now())).count(), clinicalForms.stream().filter(form -> isEqualIgnoreCase(form.getDepartment(), "Reception")).count(), "Patient registration, opening encounters, and routing walk-ins"));
         summaries.add(buildSectionSummary("triage", "Triage", triageRecords.stream().filter(record -> !isEqualIgnoreCase(record.getStatus(), "transferred")).count(), triageRecords.stream().filter(record -> isEqualIgnoreCase(record.getLevel(), "red") || isEqualIgnoreCase(record.getLevel(), "orange")).count(), clinicalForms.stream().filter(form -> isEqualIgnoreCase(form.getDepartment(), "Triage")).count(), "Detailed vital signs, risk classification, and immediate prioritization"));
-        summaries.add(buildSectionSummary("consultation", "Consultation / OPD", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "CONSULTATION")).count(), encounters.stream().filter(encounter -> !isCheckedOut(encounter) && !hasOutstandingActions(encounter.getPendingActions())).count(), clinicalForms.stream().filter(form -> isEqualIgnoreCase(form.getDepartment(), "Clinical")).count(), "Doctor assessment, diagnosis, management plan, and referrals"));
+        summaries.add(buildSectionSummary("consultation", "Consultation / OPD", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "CONSULTATION")).count(), encounters.stream().filter(encounter -> !isCheckedOut(encounter) && !hasOutstandingActions(encounter.getPendingActions())).count(), clinicalForms.stream().filter(form -> isEqualIgnoreCase(form.getDepartment(), "Clinical")).count(), "Clinician assessment, diagnosis, management plan, and referrals"));
         summaries.add(buildSectionSummary("laboratory", "Laboratory", labTests.stream().filter(test -> !isEqualIgnoreCase(test.getStatus(), "completed")).count(), labTests.stream().filter(test -> isEqualIgnoreCase(test.getStatus(), "pending")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Laboratory")).count(), "Test requests, specimen logging, results entry, and lab registers"));
         summaries.add(buildSectionSummary("radiology", "Radiology", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "RADIOLOGY")).count(), encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "RADIOLOGY") && isEqualIgnoreCase(defaultQueueStatus(encounter), "WAITING")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Radiology")).count(), "Imaging requests, examinations, reporting, and clinical handover"));
         summaries.add(buildSectionSummary("pharmacy", "Pharmacy", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "PHARMACY")).count(), drugs.stream().filter(drug -> isEqualIgnoreCase(drug.getStatus(), "critical")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Pharmacy")).count(), "Dispensing, medicine availability, and issue tracking"));
         summaries.add(buildSectionSummary("billing", "Billing & Accounts", billing.stream().filter(invoice -> !isEqualIgnoreCase(invoice.getStatus(), "completed")).count(), billing.stream().filter(invoice -> isEqualIgnoreCase(invoice.getStatus(), "pending")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Accounts") || containsIgnoreCase(form.getDepartment(), "Billing")).count(), "Fee lookup, invoices, payment clearance, and service totals"));
         summaries.add(buildSectionSummary("medical-records", "Medical Records", clinicalForms.size(), encounters.stream().filter(encounter -> encounter.isCheckedOut()).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Records")).count(), "Paper-to-digital forms, patient file continuity, and archive support"));
         summaries.add(buildSectionSummary("mch", "Maternal & Child Health", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "MCH")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getTitle(), "maternal") || containsIgnoreCase(form.getTitle(), "child")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "MCH")).count(), "Antenatal, family planning, under-five, and mother-child services"));
+        summaries.add(buildSectionSummary("vct", "VCT / HIV Testing Services", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "VCT")).count(), encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "VCT") && isEqualIgnoreCase(defaultQueueStatus(encounter), "WAITING")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "VCT")).count(), "Consent-based HIV testing, counseling, and direct ART linkage"));
         summaries.add(buildSectionSummary("art-clinic", "ART / HIV Clinic", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "ART")).count(), encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "ART") && isEqualIgnoreCase(defaultQueueStatus(encounter), "WAITING")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "ART")).count(), "Confidential HIV care, ART review, adherence, and follow-up"));
         summaries.add(buildSectionSummary("dental-clinic", "Dental Clinic", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "DENTAL")).count(), encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "DENTAL") && isEqualIgnoreCase(defaultQueueStatus(encounter), "WAITING")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Dental")).count(), "Dental assessment, treatment, prescriptions, and follow-up"));
         summaries.add(buildSectionSummary("eye-clinic", "Eye Clinic", encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "EYE")).count(), encounters.stream().filter(encounter -> isEqualIgnoreCase(encounter.getCurrentStage(), "EYE") && isEqualIgnoreCase(defaultQueueStatus(encounter), "WAITING")).count(), clinicalForms.stream().filter(form -> containsIgnoreCase(form.getDepartment(), "Eye Clinic")).count(), "Eye assessments, outpatient records, and spectacles prescriptions"));
@@ -5278,7 +5283,7 @@ public class ApiController {
         List<Map<String, Object>> antenatal = List.of();
         List<Map<String, Object>> immunizations = List.of();
         List<Map<String, Object>> familyPlanning = List.of();
-        try { antenatal = jdbc.queryForList("SELECT * FROM mch_antenatal_visits ORDER BY created_at DESC"); } catch (Exception ignored) {}
+        try { antenatal = jdbc.queryForList(mchAntenatalQuery()); } catch (Exception ignored) {}
         try { immunizations = jdbc.queryForList("SELECT * FROM mch_immunization_visits ORDER BY created_at DESC"); } catch (Exception ignored) {}
         try { familyPlanning = jdbc.queryForList("SELECT * FROM mch_family_planning ORDER BY created_at DESC"); } catch (Exception ignored) {}
         Map<String, Object> result = new LinkedHashMap<>();
@@ -5292,7 +5297,7 @@ public class ApiController {
     public List<Map<String, Object>> getMchAntenatal(HttpServletRequest req) {
         requirePermission(req, "mch.view");
         try {
-            return jdbc.queryForList("SELECT * FROM mch_antenatal_visits ORDER BY created_at DESC");
+            return jdbc.queryForList(mchAntenatalQuery());
         } catch (Exception e) { return List.of(); }
     }
 
@@ -5300,13 +5305,17 @@ public class ApiController {
     public Map<String, Object> createMchAntenatal(HttpServletRequest req, @RequestBody Map<String, Object> body) {
         requirePermission(req, "mch.view");
         String visitId = "ANC-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
+        String artNumber = strOf(body, "art_number").trim();
+        String vctTestId = strOf(body, "vct_test_id").trim();
+        validateCareLinkPatient(strOf(body, "patient_id"), artNumber, vctTestId);
         try {
             jdbc.update("""
                 INSERT INTO mch_antenatal_visits
                 (visit_id,patient_id,patient_name,visit_date,gestational_age,gravida,para,lmp,edd,
                  blood_pressure,weight,fetal_heart_rate,presentation,urinalysis,hiv_status,syphilis_status,
-                 ferrous,folic_acid,itn,tetanus_vaccine,next_visit,nurse_notes,risk_factors,nurse_name,status)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active')
+                 ferrous,folic_acid,itn,tetanus_vaccine,next_visit,nurse_notes,risk_factors,nurse_name,
+                 art_number,vct_test_id,status)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active')
                 """,
                 visitId,
                 strOf(body, "patient_id"), strOf(body, "patient_name"), strOf(body, "visit_date"),
@@ -5316,9 +5325,10 @@ public class ApiController {
                 strOf(body, "urinalysis"), strOf(body, "hiv_status"), strOf(body, "syphilis_status"),
                 boolOf(body, "ferrous"), boolOf(body, "folic_acid"), boolOf(body, "itn"),
                 strOf(body, "tetanus_vaccine"), strOf(body, "next_visit"),
-                strOf(body, "nurse_notes"), strOf(body, "risk_factors"), strOf(body, "nurse_name")
+                strOf(body, "nurse_notes"), strOf(body, "risk_factors"), strOf(body, "nurse_name"),
+                artNumber, vctTestId
             );
-            Map<String, Object> entry = jdbc.queryForMap("SELECT * FROM mch_antenatal_visits WHERE visit_id = ?", visitId);
+            Map<String, Object> entry = jdbc.queryForMap(mchAntenatalByVisitQuery(), visitId);
             return Map.of("success", true, "entry", entry);
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to save antenatal visit: " + e.getMessage());
@@ -5402,6 +5412,16 @@ public class ApiController {
     @PostMapping("/art/patients")
     public Map<String, Object> createArtPatient(HttpServletRequest req, @RequestBody Map<String, Object> body) {
         requirePermission(req, "art.view");
+        String patientId = strOf(body, "patient_id").trim();
+        String artNumber = strOf(body, "art_number").trim();
+        if (patientId.isBlank() || artNumber.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Patient and ART number are required");
+        }
+        List<Map<String, Object>> existingArtNumber = safeQuery("SELECT patient_id FROM art_patients WHERE art_number = ?", artNumber);
+        if (!existingArtNumber.isEmpty()
+                && !isEqualIgnoreCase(stringValue(existingArtNumber.get(0).get("patient_id")), patientId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "ART number belongs to a different patient");
+        }
         try {
             jdbc.update("""
                 INSERT INTO art_patients
@@ -5412,7 +5432,7 @@ public class ApiController {
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active')
                 ON CONFLICT (art_number) DO NOTHING
                 """,
-                strOf(body, "art_number"), strOf(body, "patient_id"), strOf(body, "patient_name"),
+                artNumber, patientId, strOf(body, "patient_name"),
                 strOf(body, "enrollment_date"), strOf(body, "current_regimen"), strOf(body, "regimen_line"),
                 intOf(body, "cd4_baseline"), intOf(body, "cd4_latest"),
                 longOf(body, "vl_latest"), strOf(body, "vl_date"),
@@ -5421,7 +5441,13 @@ public class ApiController {
                 strOf(body, "adherence_score"), strOf(body, "next_pickup"), strOf(body, "next_clinic_date"),
                 boolOf(body, "transfer_in"), strOf(body, "transfer_from")
             );
-            Map<String, Object> entry = jdbc.queryForMap("SELECT * FROM art_patients WHERE art_number = ?", strOf(body, "art_number"));
+            String sourceVctTestId = strOf(body, "source_vct_test_id").trim();
+            if (!sourceVctTestId.isBlank()) {
+                linkExistingVctRecord(sourceVctTestId, patientId, artNumber);
+            }
+            jdbc.update("UPDATE mch_antenatal_visits SET art_number = ?, updated_at = CURRENT_TIMESTAMP "
+                    + "WHERE patient_id = ? AND (art_number IS NULL OR art_number = '')", artNumber, patientId);
+            Map<String, Object> entry = jdbc.queryForMap("SELECT * FROM art_patients WHERE art_number = ?", artNumber);
             return Map.of("success", true, "entry", entry);
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to save ART patient: " + e.getMessage());
@@ -5469,6 +5495,124 @@ public class ApiController {
     }
 
     // ===================================================================
+    // VCT / HIV Testing Services — linked directly to ART enrolment
+    // ===================================================================
+
+    @GetMapping("/vct")
+    public List<Map<String, Object>> getVctRecords(HttpServletRequest req,
+            @RequestParam(required = false) String patientId) {
+        requirePermission(req, "vct.view");
+        try {
+            if (hasText(patientId)) {
+                return jdbc.queryForList(vctQuery() + " WHERE v.patient_id = ? ORDER BY v.created_at DESC", patientId.trim());
+            }
+            return jdbc.queryForList(vctQuery() + " ORDER BY v.created_at DESC");
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    @PostMapping("/vct")
+    public Map<String, Object> createVctRecord(HttpServletRequest req, @RequestBody Map<String, Object> body) {
+        AppUser actor = requirePermission(req, "vct.view");
+        String patientId = strOf(body, "patient_id").trim();
+        Patient patient = resolvePatient(patientId);
+        if (patient == null) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Patient must be registered before VCT testing");
+        }
+        if (!boolOf(body, "consent_given")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Documented consent is required before HIV testing");
+        }
+        String result = normalizeHivResult(strOf(body, "result"));
+        String testId = "VCT-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase(Locale.ROOT);
+        String artNumber = strOf(body, "art_number").trim();
+        if (!artNumber.isBlank() && !isReactiveHivResult(result)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Only a reactive/positive VCT result can be linked to ART");
+        }
+        if (!artNumber.isBlank()) validateCareLinkPatient(patientId, artNumber, "");
+        boolean linkedToArt = !artNumber.isBlank();
+        try {
+            jdbc.update("""
+                INSERT INTO vct_records
+                (test_id,patient_id,patient_name,test_date,purpose_of_visit,consent_given,
+                 pre_test_counseling,test_type,result,post_test_counseling,tested_by,
+                 referred_to_art,art_number,linked_at,notes,status)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,?,'completed')
+                """,
+                testId, resolveCanonicalPatientId(patientId), resolveCanonicalPatientName(patient, strOf(body, "patient_name")),
+                strOf(body, "test_date"), strOf(body, "purpose"), true,
+                boolDefaultTrue(body, "pre_test_counseling"), strOf(body, "test_type"), result,
+                boolDefaultTrue(body, "post_test_counseling"),
+                resolveActorName(actor, strOf(body, "tested_by"), "VCT Counselor"),
+                linkedToArt, artNumber, linkedToArt, strOf(body, "notes")
+            );
+            Map<String, Object> entry = jdbc.queryForMap(vctQuery() + " WHERE v.test_id = ?", testId);
+            return Map.of("success", true, "entry", entry);
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to save VCT record: " + e.getMessage());
+        }
+    }
+
+    @PostMapping("/vct/{testId}/link-art")
+    public Map<String, Object> linkVctToArt(HttpServletRequest req, @PathVariable String testId,
+            @Valid @RequestBody VctArtLinkRequest request) {
+        AppUser actor = requireAnyPermission(req, List.of("vct.view", "art.view"));
+        Map<String, Object> vct;
+        try {
+            vct = jdbc.queryForMap("SELECT * FROM vct_records WHERE test_id = ?", testId);
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "VCT test record not found");
+        }
+        if (!isReactiveHivResult(stringValue(vct.get("result")))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only a reactive/positive VCT result can be linked to ART");
+        }
+        String patientId = stringValue(vct.get("patient_id"));
+        String artNumber = request.artNumber().trim();
+        try {
+            List<Map<String, Object>> existing = jdbc.queryForList("SELECT * FROM art_patients WHERE art_number = ?", artNumber);
+            if (!existing.isEmpty() && !isEqualIgnoreCase(stringValue(existing.get(0).get("patient_id")), patientId)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "ART number belongs to a different patient");
+            }
+            if (existing.isEmpty()) {
+                jdbc.update("""
+                    INSERT INTO art_patients
+                    (art_number,patient_id,patient_name,enrollment_date,current_regimen,regimen_line,
+                     next_clinic_date,status)
+                    VALUES (?,?,?,?,?,?,?,'active')
+                    """, artNumber, patientId, stringValue(vct.get("patient_name")),
+                    isBlank(request.enrollmentDate()) ? LocalDate.now().toString() : request.enrollmentDate().trim(),
+                    stringValue(request.currentRegimen()), stringValue(request.regimenLine()),
+                    stringValue(request.nextClinicDate()));
+            }
+            linkExistingVctRecord(testId, patientId, artNumber);
+            jdbc.update("UPDATE mch_antenatal_visits SET art_number = ?, vct_test_id = ?, updated_at = CURRENT_TIMESTAMP "
+                    + "WHERE patient_id = ? AND (art_number IS NULL OR art_number = '')", artNumber, testId, patientId);
+            writeAuditLog(actor.getName(), actor.getRole(), "vct_art_link",
+                    "Linked VCT record " + testId + " to ART enrolment " + artNumber, "127.0.0.1");
+            Map<String, Object> entry = jdbc.queryForMap(vctQuery() + " WHERE v.test_id = ?", testId);
+            return Map.of("success", true, "entry", entry);
+        } catch (ResponseStatusException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to link VCT record to ART: " + e.getMessage());
+        }
+    }
+
+    @GetMapping("/care-links/{patientId}")
+    public Map<String, Object> getCareLinks(HttpServletRequest req, @PathVariable String patientId) {
+        requireAnyPermission(req, List.of("mch.view", "vct.view", "art.view"));
+        String canonicalId = resolveCanonicalPatientId(patientId);
+        List<Map<String, Object>> art = safeQuery("SELECT art_number,enrollment_date,pregnancy_status,status,next_clinic_date "
+                + "FROM art_patients WHERE patient_id = ? ORDER BY created_at DESC", canonicalId);
+        List<Map<String, Object>> vct = safeQuery("SELECT test_id,test_date,result,referred_to_art,art_number,status "
+                + "FROM vct_records WHERE patient_id = ? ORDER BY created_at DESC", canonicalId);
+        List<Map<String, Object>> mch = safeQuery("SELECT visit_id,visit_date,hiv_status,art_number,vct_test_id,status "
+                + "FROM mch_antenatal_visits WHERE patient_id = ? ORDER BY created_at DESC", canonicalId);
+        return Map.of("patient_id", canonicalId, "art", art, "vct", vct, "mch_antenatal", mch);
+    }
+
+    // ===================================================================
     // Dental Clinic
     // ===================================================================
 
@@ -5476,7 +5620,7 @@ public class ApiController {
     public List<Map<String, Object>> getDentalRecords(HttpServletRequest req) {
         requirePermission(req, "dental.view");
         try {
-            return jdbc.queryForList("SELECT * FROM dental_records ORDER BY created_at DESC");
+            return jdbc.queryForList("SELECT dental_records.*, chief_complaint AS purpose FROM dental_records ORDER BY created_at DESC");
         } catch (Exception e) { return List.of(); }
     }
 
@@ -5494,7 +5638,7 @@ public class ApiController {
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'completed')
                 """,
                 visitId, strOf(body, "patient_id"), strOf(body, "patient_name"),
-                strOf(body, "visit_date"), strOf(body, "dentist_name"), strOf(body, "chief_complaint"),
+                strOf(body, "visit_date"), strOf(body, "dentist_name"), strFirst(body, "purpose", "chief_complaint"),
                 strOf(body, "teeth_affected"), strOf(body, "diagnosis"), strOf(body, "treatment_performed"),
                 boolOf(body, "local_anesthetic"), strOf(body, "anesthetic_type"),
                 strOf(body, "extractions_done"), strOf(body, "fillings_placed"),
@@ -5502,7 +5646,7 @@ public class ApiController {
                 strOf(body, "medications"), boolOf(body, "referral_needed"), strOf(body, "referral_reason"),
                 strOf(body, "next_appointment"), strOf(body, "notes")
             );
-            Map<String, Object> entry = jdbc.queryForMap("SELECT * FROM dental_records WHERE visit_id = ?", visitId);
+            Map<String, Object> entry = jdbc.queryForMap("SELECT dental_records.*, chief_complaint AS purpose FROM dental_records WHERE visit_id = ?", visitId);
             return Map.of("success", true, "entry", entry);
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to save dental record: " + e.getMessage());
@@ -5517,7 +5661,7 @@ public class ApiController {
     public List<Map<String, Object>> getEyeRecords(HttpServletRequest req) {
         requirePermission(req, "eye.view");
         try {
-            return jdbc.queryForList("SELECT * FROM eye_clinic_records ORDER BY created_at DESC");
+            return jdbc.queryForList("SELECT eye_clinic_records.*, chief_complaint AS purpose FROM eye_clinic_records ORDER BY created_at DESC");
         } catch (Exception e) { return List.of(); }
     }
 
@@ -5538,7 +5682,7 @@ public class ApiController {
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'completed')
                 """,
                 visitId, strOf(body, "patient_id"), strOf(body, "patient_name"),
-                strOf(body, "visit_date"), strOf(body, "optometrist_name"), strOf(body, "chief_complaint"),
+                strOf(body, "visit_date"), strOf(body, "optometrist_name"), strFirst(body, "purpose", "chief_complaint"),
                 strOf(body, "va_right_unaided"), strOf(body, "va_left_unaided"),
                 strOf(body, "va_right_corrected"), strOf(body, "va_left_corrected"),
                 strOf(body, "refraction_right_sph"), strOf(body, "refraction_right_cyl"), strOf(body, "refraction_right_axis"),
@@ -5549,7 +5693,7 @@ public class ApiController {
                 strOf(body, "treatment"), boolOf(body, "referral_needed"), strOf(body, "referral_reason"),
                 strOf(body, "next_review"), strOf(body, "notes")
             );
-            Map<String, Object> entry = jdbc.queryForMap("SELECT * FROM eye_clinic_records WHERE visit_id = ?", visitId);
+            Map<String, Object> entry = jdbc.queryForMap("SELECT eye_clinic_records.*, chief_complaint AS purpose FROM eye_clinic_records WHERE visit_id = ?", visitId);
             return Map.of("success", true, "entry", entry);
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to save eye clinic record: " + e.getMessage());
@@ -5564,7 +5708,7 @@ public class ApiController {
     public List<Map<String, Object>> getStiRecords(HttpServletRequest req) {
         requirePermission(req, "sti.view");
         try {
-            return jdbc.queryForList("SELECT * FROM sti_records ORDER BY created_at DESC");
+            return jdbc.queryForList("SELECT sti_records.*, chief_complaint AS purpose FROM sti_records ORDER BY created_at DESC");
         } catch (Exception e) { return List.of(); }
     }
 
@@ -5582,7 +5726,7 @@ public class ApiController {
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'completed')
                 """,
                 visitId, strOf(body, "patient_id"), strOf(body, "patient_name"),
-                strOf(body, "visit_date"), strOf(body, "clinician_name"), strOf(body, "chief_complaint"),
+                strOf(body, "visit_date"), strOf(body, "clinician_name"), strFirst(body, "purpose", "chief_complaint"),
                 strOf(body, "syndrome_classification"), strOf(body, "lab_tests_done"),
                 strOf(body, "hiv_test"), strOf(body, "syphilis_test"), strOf(body, "hepatitis_b"),
                 strOf(body, "diagnosis"), strOf(body, "treatment_protocol"), strOf(body, "medications_given"),
@@ -5591,7 +5735,7 @@ public class ApiController {
                 boolOf(body, "hiv_counseling_given"), boolOf(body, "adherence_counseling_given"),
                 strOf(body, "follow_up_date"), strOf(body, "notes")
             );
-            Map<String, Object> entry = jdbc.queryForMap("SELECT * FROM sti_records WHERE visit_id = ?", visitId);
+            Map<String, Object> entry = jdbc.queryForMap("SELECT sti_records.*, chief_complaint AS purpose FROM sti_records WHERE visit_id = ?", visitId);
             return Map.of("success", true, "entry", entry);
         } catch (Exception e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to save STI record: " + e.getMessage());
@@ -5782,9 +5926,98 @@ public class ApiController {
     // Private helpers for specialized clinic endpoints
     // ===================================================================
 
+    private String mchAntenatalBaseQuery() {
+        return "SELECT anc.*, "
+                + "EXISTS (SELECT 1 FROM art_patients art WHERE art.patient_id = anc.patient_id "
+                + "AND (anc.art_number IS NULL OR anc.art_number = '' OR art.art_number = anc.art_number)) AS art_linked, "
+                + "EXISTS (SELECT 1 FROM vct_records vct WHERE vct.patient_id = anc.patient_id "
+                + "AND (anc.vct_test_id IS NULL OR anc.vct_test_id = '' OR vct.test_id = anc.vct_test_id)) AS vct_linked "
+                + "FROM mch_antenatal_visits anc";
+    }
+
+    private String mchAntenatalQuery() {
+        return mchAntenatalBaseQuery() + " ORDER BY anc.created_at DESC";
+    }
+
+    private String mchAntenatalByVisitQuery() {
+        return mchAntenatalBaseQuery() + " WHERE anc.visit_id = ?";
+    }
+
+    private String vctQuery() {
+        return "SELECT v.*, CASE WHEN art.art_number IS NULL THEN FALSE ELSE TRUE END AS art_linked, "
+                + "art.status AS linked_art_status, art.next_clinic_date AS art_next_clinic_date "
+                + "FROM vct_records v LEFT JOIN art_patients art ON art.art_number = v.art_number";
+    }
+
+    private void validateCareLinkPatient(String patientId, String artNumber, String vctTestId) {
+        if (hasText(artNumber)) {
+            List<Map<String, Object>> rows = safeQuery("SELECT patient_id FROM art_patients WHERE art_number = ?", artNumber);
+            if (rows.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "ART number was not found");
+            if (!isEqualIgnoreCase(stringValue(rows.get(0).get("patient_id")), patientId)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "ART number belongs to a different patient");
+            }
+        }
+        if (hasText(vctTestId)) {
+            List<Map<String, Object>> rows = safeQuery("SELECT patient_id FROM vct_records WHERE test_id = ?", vctTestId);
+            if (rows.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "VCT test record was not found");
+            if (!isEqualIgnoreCase(stringValue(rows.get(0).get("patient_id")), patientId)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "VCT test record belongs to a different patient");
+            }
+        }
+    }
+
+    private void linkExistingVctRecord(String testId, String patientId, String artNumber) {
+        List<Map<String, Object>> rows = safeQuery("SELECT patient_id,result FROM vct_records WHERE test_id = ?", testId);
+        if (rows.isEmpty()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "VCT test record was not found");
+        Map<String, Object> vct = rows.get(0);
+        if (!isEqualIgnoreCase(stringValue(vct.get("patient_id")), patientId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "VCT test record belongs to a different patient");
+        }
+        if (!isReactiveHivResult(stringValue(vct.get("result")))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Only a reactive/positive result can be linked to ART");
+        }
+        jdbc.update("UPDATE vct_records SET referred_to_art = TRUE, art_number = ?, linked_at = CURRENT_TIMESTAMP, "
+                + "updated_at = CURRENT_TIMESTAMP WHERE test_id = ?", artNumber, testId);
+    }
+
+    private String normalizeHivResult(String value) {
+        String normalized = stringValue(value).trim().replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "REACTIVE", "POSITIVE" -> "Reactive";
+            case "NON_REACTIVE", "NEGATIVE" -> "Non-Reactive";
+            case "INDETERMINATE", "INCONCLUSIVE" -> "Indeterminate";
+            default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "VCT result must be Reactive, Non-Reactive, or Indeterminate");
+        };
+    }
+
+    private boolean isReactiveHivResult(String value) {
+        return isEqualIgnoreCase(value, "Reactive") || isEqualIgnoreCase(value, "Positive");
+    }
+
+    private Boolean boolDefaultTrue(Map<String, Object> body, String key) {
+        return !body.containsKey(key) || boolOf(body, key);
+    }
+
+    private List<Map<String, Object>> safeQuery(String sql, Object... args) {
+        try {
+            return jdbc.queryForList(sql, args);
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
     private String strOf(Map<String, Object> body, String key) {
         Object val = body.get(key);
-        return val == null ? null : val.toString();
+        return val == null ? "" : val.toString();
+    }
+
+    private String strFirst(Map<String, Object> body, String... keys) {
+        for (String key : keys) {
+            String value = strOf(body, key);
+            if (!value.isBlank()) return value;
+        }
+        return "";
     }
 
     private Integer intOf(Map<String, Object> body, String key) {

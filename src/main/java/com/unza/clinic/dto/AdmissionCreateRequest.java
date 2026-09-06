@@ -1,5 +1,6 @@
 package com.unza.clinic.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.NotBlank;
 
 public record AdmissionCreateRequest(
@@ -7,7 +8,7 @@ public record AdmissionCreateRequest(
         @NotBlank String patientName,
         @NotBlank String ward,
         @NotBlank String bed,
-        @NotBlank String doctor,
+        @JsonAlias("doctor") @NotBlank String clinician,
         @NotBlank String admittedOn,
         @NotBlank String diagnosis
 ) {

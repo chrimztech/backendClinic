@@ -1,12 +1,13 @@
 package com.unza.clinic.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.NotBlank;
 
 public record TriageCreateRequest(
         @NotBlank String patientId,
         @NotBlank String patientName,
         @NotBlank String level,
-        @NotBlank String chiefComplaint,
+        @JsonAlias("chiefComplaint") @NotBlank String purpose,
         String vitalSigns,
         @NotBlank String bloodPressure,
         String nurseName,

@@ -1,5 +1,6 @@
 package com.unza.clinic.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 
@@ -8,9 +9,9 @@ public record EmergencyCaseCreateRequest(
         @NotNull Integer age,
         @NotBlank String gender,
         @NotBlank String severity,
-        @NotBlank String chiefComplaint,
+        @JsonAlias("chiefComplaint") @NotBlank String purpose,
         @NotBlank String arrivalMode,
-        @NotBlank String attendingDoctor,
+        @JsonAlias("attendingDoctor") @NotBlank String attendingClinician,
         @NotBlank String nurseOnDuty,
         @NotBlank String vitals
 ) {

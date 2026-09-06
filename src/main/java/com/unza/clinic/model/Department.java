@@ -1,5 +1,6 @@
 package com.unza.clinic.model;
 
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -15,6 +16,7 @@ public class Department {
     private String code;
     private String name;
     private String head;
+    @Column(name = "head_user_id")
     private String headUserId;
     private Integer clinicians;
     private Integer doctors;

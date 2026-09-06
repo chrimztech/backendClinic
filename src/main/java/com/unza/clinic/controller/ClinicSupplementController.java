@@ -74,7 +74,7 @@ public class ClinicSupplementController {
                     e.put("summary", "Triage: " + nvl(t.getChiefComplaint()) + " [" + nvl(t.getLevel()) + "]");
                     e.put("detail", Map.of(
                             "level", nvl(t.getLevel()),
-                            "chiefComplaint", nvl(t.getChiefComplaint()),
+                            "purpose", nvl(t.getChiefComplaint()),
                             "vitalSigns", nvl(t.getVitalSigns()),
                             "bloodPressure", nvl(t.getBloodPressure()),
                             "status", nvl(t.getStatus()),
@@ -134,7 +134,7 @@ public class ClinicSupplementController {
                             "duration", nvl(rx.getDuration()),
                             "instructions", nvl(rx.getInstructions()),
                             "status", nvl(rx.getStatus()),
-                            "doctor", nvl(rx.getDoctor())
+                            "clinician", nvl(rx.getDoctor())
                     ));
                     timeline.add(e);
                 });
@@ -152,7 +152,7 @@ public class ClinicSupplementController {
                             "ward", nvl(adm.getWard()),
                             "bed", nvl(adm.getBed()),
                             "diagnosis", nvl(adm.getDiagnosis()),
-                            "doctor", nvl(adm.getDoctor()),
+                            "clinician", nvl(adm.getDoctor()),
                             "status", nvl(adm.getStatus())
                     ));
                     timeline.add(e);
@@ -303,7 +303,7 @@ public class ClinicSupplementController {
                 .limit(top)
                 .map(entry -> {
                     Map<String, Object> row = new LinkedHashMap<>();
-                    row.put("complaint", entry.getKey());
+                    row.put("purpose", entry.getKey());
                     row.put("count", entry.getValue());
                     return row;
                 })
@@ -314,8 +314,8 @@ public class ClinicSupplementController {
         return ResponseEntity.ok(Map.of(
                 "reportDate", LocalDate.now().toString(),
                 "totalTriageRecords", dataStore.getTriageRecords().size(),
-                "totalWithComplaint", total,
-                "topDiagnoses", ranked
+                "totalWithPurpose", total,
+                "topPurposes", ranked
         ));
     }
 

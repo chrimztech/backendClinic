@@ -45,6 +45,19 @@ public class ClinicTableInitializer {
         createPharmacyDispensingLogTable();
         seedDrugInteractions();
         seedLabReferenceRanges();
+        cleanupLegacyDoctorRole();
+    }
+
+    // ─── Legacy role cleanup ────────────────────────────────────────────────
+    // "Doctor" was renamed to "Clinician" as the canonical role name. New
+    // writes are normalized in ApiController, but rows created before that
+    // existed may still say "Doctor" — fix them up on every boot.
+
+    private void cleanupLegacyDoctorRole() {
+        run("UPDATE app_users SET role = 'Clinician' WHERE LOWER(role) = 'doctor'");
+        run("UPDATE staff_members SET role = 'Clinician' WHERE LOWER(role) = 'doctor'");
+        run("UPDATE staff_schedules SET role = 'Clinician' WHERE LOWER(role) = 'doctor'");
+        run("UPDATE departments SET clinicians = doctors WHERE clinicians IS NULL");
     }
 
     // ─── MCH ────────────────────────────────────────────────────────────────
