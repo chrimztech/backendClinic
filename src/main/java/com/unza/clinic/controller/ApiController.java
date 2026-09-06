@@ -2510,7 +2510,7 @@ public class ApiController {
         record.setNotes(stringValue(request.notes()));
         record = dataStore.addEncounterRecord(record);
         if (hasText(request.serviceCode())) {
-            applyReceptionService(record, patient, request.serviceCode());
+            record = applyReceptionService(record, patient, request.serviceCode());
         }
         writeAuditLog(record.getCreatedBy(), "create", "Opened encounter " + record.getEncounterId() + " for " + record.getPatientName(), "127.0.0.1");
         Map<String, Object> response = toEncounterResponse(record);
@@ -2540,7 +2540,7 @@ public class ApiController {
             record.setPurposeOfVisit(request.purpose().trim());
         }
         if (hasText(request.serviceCode())) {
-            applyReceptionService(record, resolvePatient(record.getPatientId()), request.serviceCode());
+            record = applyReceptionService(record, resolvePatient(record.getPatientId()), request.serviceCode());
         }
 
         boolean claimedByAnother = hasText(record.getAssignedTo())
@@ -4418,7 +4418,7 @@ public class ApiController {
                 .anyMatch(invoice -> isEqualIgnoreCase(invoice.getStatus(), "pending"));
     }
 
-    private void applyReceptionService(EncounterRecord encounter, Patient patient, String serviceCode) {
+    private EncounterRecord applyReceptionService(EncounterRecord encounter, Patient patient, String serviceCode) {
         String normalizedCode = stringValue(serviceCode).trim();
         ServiceTariff tariff = dataStore.getServiceTariffByCode(normalizedCode);
         if (tariff == null || isEqualIgnoreCase(tariff.getStatus(), "inactive")) {
@@ -4432,7 +4432,7 @@ public class ApiController {
         encounter.setPaymentStatus(result.exempt() || !hasPendingInvoiceForEncounter(encounter) ? "CLEARED" : "PENDING");
         if ("PENDING".equals(encounter.getPaymentStatus())) encounter.setCheckoutEligible(false);
         encounter.setUpdatedAt(LocalDateTime.now().toString());
-        dataStore.updateEncounterRecord(encounter);
+        return dataStore.updateEncounterRecord(encounter);
     }
 
     private boolean requiresReceptionPaymentClearance(String stageValue) {
